@@ -799,7 +799,13 @@ An alternative ID for the shade. (??)
 A description of the type of battery used by the shade. E.g. normal or
 rechargeable battery.
 
-*Type*: string.
+*Type*: enum.
+
+|Value|Description|
+|-----|-----------|
+|1    |Hard Wired Power Supply|
+|2    |Battery Wand|
+|3    |Rechargeable Battery|
 
 ## ShadeCapabilities
 
