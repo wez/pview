@@ -150,7 +150,7 @@ pub struct ShadeFirmware {
     pub sub_revision: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct ShadePosition {
@@ -160,7 +160,7 @@ pub struct ShadePosition {
     pub position_2: Option<u16>,
 }
 
-#[derive(Serialize_repr, Deserialize_repr, Debug)]
+#[derive(Serialize_repr, Deserialize_repr, Debug, Clone, Copy)]
 #[repr(i32)]
 pub enum PositionKind {
     None = 0,
@@ -295,4 +295,16 @@ pub struct Motor {
     pub revision: i32,
     pub sub_revision: i32,
     pub build: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, clap::ValueEnum)]
+#[serde(rename_all = "camelCase")]
+pub enum ShadeUpdateMotion {
+    Down,
+    Heart,
+    Jog,
+    LeftTilt,
+    RightTilt,
+    Stop,
+    Up,
 }

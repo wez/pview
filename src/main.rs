@@ -1,6 +1,5 @@
-use anyhow::Context;
+use crate::api_types::ShadeUpdateMotion;
 use clap::Parser;
-use reqwest::Method;
 use std::collections::BTreeMap;
 use tabout::{Alignment, Column};
 use tokio::sync::Mutex;
@@ -10,7 +9,6 @@ mod discovery;
 mod http_helpers;
 mod hub;
 
-use crate::api_types::*;
 use crate::hub::*;
 
 #[derive(Parser, Debug)]
@@ -117,10 +115,59 @@ impl InspectShadeCommand {
     }
 }
 
+#[derive(clap::Args, Debug)]
+#[group(required = true)]
+struct TargetPosition {
+    #[arg(long, conflicts_with = "percent")]
+    motion: Option<ShadeUpdateMotion>,
+    #[arg(long, group = "position")]
+    percent: Option<u8>,
+}
+
+#[derive(Parser, Debug)]
+pub struct MoveShadeCommand {
+    /// The name or id of the shade to open.
+    /// Names will be compared ignoring case.
+    name: String,
+    #[command(flatten)]
+    target_position: TargetPosition,
+}
+
+impl MoveShadeCommand {
+    pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
+        let hub = args.hub().await?;
+
+        let shade = hub.shade_by_name(&self.name).await?;
+
+        let shade = if let Some(motion) = self.target_position.motion {
+            hub.move_shade(shade.id, motion).await?
+        } else if let Some(percent) = self.target_position.percent {
+            let absolute = ((u16::max_value() as u32) * (percent as u32) / 100u32) as u16;
+
+            let mut position = shade.positions.clone().ok_or_else(|| {
+                anyhow::anyhow!("shade has no existing position information! {shade:#?}")
+            })?;
+            if shade.is_primary() {
+                position.position_1 = absolute;
+            } else {
+                position.position_2.replace(absolute);
+            }
+
+            hub.change_shade_position(shade.id, position).await?
+        } else {
+            anyhow::bail!("One of --motion or --percent is required");
+        };
+
+        println!("{shade:#?}");
+        Ok(())
+    }
+}
+
 #[derive(Parser, Debug)]
 pub enum SubCommand {
     ListShades(ListShadesCommand),
     InspectShade(InspectShadeCommand),
+    MoveShade(MoveShadeCommand),
 }
 
 impl SubCommand {
@@ -128,6 +175,7 @@ impl SubCommand {
         match self {
             Self::ListShades(cmd) => cmd.run(args).await,
             Self::InspectShade(cmd) => cmd.run(args).await,
+            Self::MoveShade(cmd) => cmd.run(args).await,
         }
     }
 }
