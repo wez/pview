@@ -1,7 +1,7 @@
-use std::convert::AsRef;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_repr::*;
+use std::convert::AsRef;
 
 // <https://github.com/jlaur/hdpowerview-doc/>
 // <https://github.com/openhab/openhab-addons/files/7583705/PowerView-Hub-REST-API-v2.pdf>
@@ -57,6 +57,7 @@ impl Serialize for Base64Name {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RoomData {
     pub color_id: i32,
     pub icon_id: i32,
@@ -77,6 +78,7 @@ pub enum RoomType {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ShadesResponse {
     pub shade_data: Vec<ShadeData>,
     pub shade_ids: Vec<u32>,
@@ -84,10 +86,16 @@ pub struct ShadesResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ShadeData {
     pub battery_status: BatteryStatus,
     pub battery_strength: i32,
     pub firmware: Option<ShadeFirmware>,
+    pub capabilities: ShadeCapabilities,
+    pub battery_kind: ShadeBatteryKind,
+    pub smart_power_supply: SmartPowerSupply,
+    pub signal_strength: Option<i32>,
+    pub motor: Option<Motor>,
     pub group_id: i32,
     pub id: i32,
     pub name: Option<Base64Name>,
@@ -111,6 +119,7 @@ pub enum BatteryStatus {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ShadeFirmware {
     pub build: i32,
     pub index: Option<i32>,
@@ -120,6 +129,7 @@ pub struct ShadeFirmware {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct ShadePosition {
     pub pos_kind_1: PositionKind,
     pub pos_kind_2: Option<PositionKind>,
@@ -169,5 +179,97 @@ pub enum ShadeType {
     DuoliteLift = 79,
 }
 
+#[derive(Serialize_repr, Deserialize_repr, Debug, Copy, Clone)]
+#[repr(i32)]
+pub enum ShadeCapabilities {
+    BottomUp = 0,
+    BottomUpTilt90 = 1,
+    BottomUpTilt180 = 2,
+    VerticalTilt180 = 3,
+    Vertical = 4,
+    TiltOnly180 = 5,
+    TopDown = 6,
+    TopDownBottomUp = 7,
+    DualOverlapped = 8,
+    DualOverlappedTilt90 = 9,
+}
+
+impl ShadeCapabilities {
+    pub fn flags(self) -> ShadeCapabilityFlags {
+        match self {
+            Self::BottomUp => ShadeCapabilityFlags::PRIMARY_RAIL,
+            Self::BottomUpTilt90 => {
+                ShadeCapabilityFlags::PRIMARY_RAIL | ShadeCapabilityFlags::TILT_ON_CLOSED
+            }
+            Self::BottomUpTilt180 => {
+                ShadeCapabilityFlags::PRIMARY_RAIL
+                    | ShadeCapabilityFlags::TILT_ANYWHERE
+                    | ShadeCapabilityFlags::TILT_180
+            }
+            Self::VerticalTilt180 => {
+                ShadeCapabilityFlags::PRIMARY_RAIL
+                    | ShadeCapabilityFlags::TILT_ANYWHERE
+                    | ShadeCapabilityFlags::TILT_180
+            }
+            Self::Vertical => ShadeCapabilityFlags::PRIMARY_RAIL,
+            Self::TiltOnly180 => {
+                ShadeCapabilityFlags::TILT_ANYWHERE | ShadeCapabilityFlags::TILT_180
+            }
+            Self::TopDown => {
+                ShadeCapabilityFlags::PRIMARY_RAIL | ShadeCapabilityFlags::PRIMARY_RAIL_REVERSED
+            }
+            Self::TopDownBottomUp => {
+                ShadeCapabilityFlags::PRIMARY_RAIL | ShadeCapabilityFlags::SECONDARY_RAIL
+            }
+            Self::DualOverlapped => {
+                ShadeCapabilityFlags::PRIMARY_RAIL
+                    | ShadeCapabilityFlags::SECONDARY_RAIL
+                    | ShadeCapabilityFlags::SECONDARY_RAIL_OVERLAPPED
+            }
+            Self::DualOverlappedTilt90 => {
+                ShadeCapabilityFlags::PRIMARY_RAIL
+                    | ShadeCapabilityFlags::SECONDARY_RAIL
+                    | ShadeCapabilityFlags::SECONDARY_RAIL_OVERLAPPED
+                    | ShadeCapabilityFlags::TILT_ON_CLOSED
+            }
+        }
+    }
+}
+
 bitflags::bitflags! {
+    pub struct ShadeCapabilityFlags : u8 {
+        const PRIMARY_RAIL = 1;
+        const SECONDARY_RAIL = 2;
+        const TILT_ON_CLOSED = 4;
+        const TILT_ANYWHERE = 8;
+        const TILT_180 = 16;
+        const PRIMARY_RAIL_REVERSED = 32;
+        const SECONDARY_RAIL_OVERLAPPED = 64;
+    }
+}
+
+#[derive(Serialize_repr, Deserialize_repr, Debug, Copy, Clone)]
+#[repr(i32)]
+pub enum ShadeBatteryKind {
+    HardWiredPowerSupply = 1,
+    BatteryWand = 2,
+    RechargeableBattery = 3,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct SmartPowerSupply {
+    pub status: i32,
+    pub id: i32,
+    pub port: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct Motor {
+    pub revision: i32,
+    pub sub_revision: i32,
+    pub build: i32,
 }
