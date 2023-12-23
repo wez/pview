@@ -1,0 +1,19 @@
+[package]
+name = "hd-pview"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+bitflags = "2.4.1"
+clap = { version = "4.4.0", features = ["derive"] }
+data-encoding = "2.4.0"
+reqwest = { version = "0.11.20", features = ["json", "rustls-tls"] }
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.105"
+serde_repr = "0.1.16"
+tabout = "0.3.0"
+tokio = { version = "1.32.0", features = ["rt", "macros", "rt-multi-thread"] }
+wez-mdns = "0.1.1"
