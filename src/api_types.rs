@@ -14,8 +14,14 @@ pub struct RoomResponse {
     pub room_ids: Vec<u32>,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Base64Name(String);
+
+impl Base64Name {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl std::ops::Deref for Base64Name {
     type Target = String;
@@ -99,9 +105,12 @@ pub struct ShadeData {
     pub group_id: i32,
     pub id: i32,
     pub name: Option<Base64Name>,
+    /// Display order
     pub order: Option<i32>,
     pub positions: Option<ShadePosition>,
     pub room_id: Option<i32>,
+    /// The secondary name of the shade base64 encoded. Used by the Apple Home application as the
+    /// secondary service name to control shades with blackout blinds or a top rail movement.
     pub secondary_name: Option<Base64Name>,
     #[serde(rename = "type")]
     pub shade_type: ShadeType,

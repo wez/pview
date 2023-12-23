@@ -15,7 +15,8 @@ impl Hub {
 
     pub async fn list_rooms(&self) -> anyhow::Result<Vec<RoomData>> {
         let mut resp: RoomResponse = get_request_with_json_response(self.url("api/rooms")).await?;
-        resp.room_data.sort_by(|a, b| a.order.cmp(&b.order));
+        resp.room_data
+            .sort_by_key(|item| (item.order, item.name.to_string()));
         Ok(resp.room_data)
     }
 
@@ -33,7 +34,8 @@ impl Hub {
         let url = self.url(&format!("api/shades{params}"));
 
         let mut resp: ShadesResponse = get_request_with_json_response(url).await?;
-        resp.shade_data.sort_by(|a, b| a.order.cmp(&b.order));
+        resp.shade_data
+            .sort_by_key(|item| (item.order, item.name.clone()));
 
         Ok(resp.shade_data)
     }
@@ -41,5 +43,40 @@ impl Hub {
     pub async fn discover() -> anyhow::Result<Self> {
         let addr = resolve_hub().await?;
         Ok(Hub { addr })
+    }
+
+    pub async fn room_by_name(&self, name: &str) -> anyhow::Result<RoomData> {
+        let rooms = self.list_rooms().await?;
+        for room in rooms {
+            if room.name.eq_ignore_ascii_case(name) {
+                return Ok(room);
+            }
+            if room.id.to_string() == name {
+                return Ok(room);
+            }
+        }
+        anyhow::bail!("No room with name or id matching provided '{name}' was found");
+    }
+
+    pub async fn shade_by_name(&self, name: &str) -> anyhow::Result<ShadeData> {
+        let shades = self.list_shades(None, None).await?;
+        for shade in shades {
+            if let Some(shade_name) = &shade.name {
+                if shade_name.as_str().eq_ignore_ascii_case(name) {
+                    return Ok(shade);
+                }
+            }
+            if let Some(shade_name) = &shade.secondary_name {
+                if shade_name.as_str().eq_ignore_ascii_case(name) {
+                    return Ok(shade);
+                }
+            }
+            if shade.id.to_string() == name {
+                return Ok(shade);
+            }
+        }
+        anyhow::bail!(
+            "No shade with name, secondary name or id matching provided '{name}' was found"
+        );
     }
 }

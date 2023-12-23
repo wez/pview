@@ -23,30 +23,24 @@ pub struct Args {
 }
 
 #[derive(Parser, Debug)]
-pub enum SubCommand {
-    ListShades,
+pub struct ListShadesCommand {
+    /// Only return shades in the specified room
+    #[clap(long)]
+    room: Option<String>,
 }
 
-impl SubCommand {
+impl ListShadesCommand {
     pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
-        match self {
-            Self::ListShades => self.list_shades(args).await,
-        }
-    }
-
-    pub async fn list_shades(&self, args: &Args) -> anyhow::Result<()> {
         let hub = args.hub().await?;
 
-        let rooms: BTreeMap<String, RoomData> = hub
-            .list_rooms()
-            .await?
-            .into_iter()
-            .map(|room| (room.name.to_string(), room))
-            .collect();
-        // println!("Rooms: {rooms:#?}");
+        let opt_room_id = match &self.room {
+            Some(name) => Some(hub.room_by_name(name).await?.id),
+            None => None,
+        };
 
-        let shades = hub.list_shades(None, None).await?;
-        // println!("Shades: {shades:#?}");
+        let rooms = hub.list_rooms().await?;
+
+        let shades = hub.list_shades(None, opt_room_id).await?;
 
         let mut shades_by_room = BTreeMap::new();
         for shade in shades {
@@ -54,9 +48,6 @@ impl SubCommand {
                 .entry(shade.room_id.unwrap_or(0))
                 .or_insert_with(|| vec![]);
             room.push(shade);
-        }
-        for shades_in_room in shades_by_room.values_mut() {
-            shades_in_room.sort_by(|a, b| a.name.cmp(&b.name));
         }
 
         let columns = &[
@@ -82,7 +73,7 @@ impl SubCommand {
             },
         ];
         let mut rows = vec![];
-        for (room_name, room_data) in &rooms {
+        for room_data in &rooms {
             if let Some(shades) = shades_by_room.get(&room_data.id) {
                 for shade in shades {
                     let (pos1, pos2) = match &shade.positions {
@@ -96,7 +87,7 @@ impl SubCommand {
                     };
 
                     rows.push(vec![
-                        room_name.to_string(),
+                        room_data.name.to_string(),
                         shade
                             .name
                             .as_ref()
@@ -112,6 +103,39 @@ impl SubCommand {
         }
         println!("{}", tabout::tabulate_output_as_string(columns, &rows)?);
         Ok(())
+    }
+}
+
+#[derive(Parser, Debug)]
+pub struct InspectShadeCommand {
+    /// The name or id of the shade to inspect.
+    /// Names will be compared ignoring case.
+    name: String,
+}
+
+impl InspectShadeCommand {
+    pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
+        let hub = args.hub().await?;
+
+        let shade = hub.shade_by_name(&self.name).await?;
+
+        println!("{shade:#?}");
+        Ok(())
+    }
+}
+
+#[derive(Parser, Debug)]
+pub enum SubCommand {
+    ListShades(ListShadesCommand),
+    InspectShade(InspectShadeCommand),
+}
+
+impl SubCommand {
+    pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
+        match self {
+            Self::ListShades(cmd) => cmd.run(args).await,
+            Self::InspectShade(cmd) => cmd.run(args).await,
+        }
     }
 }
 
