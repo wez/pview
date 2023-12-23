@@ -2,7 +2,7 @@ use crate::api_types::*;
 use crate::discovery::resolve_hub;
 use crate::http_helpers::{get_request_with_json_response, request_with_json_response};
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::IpAddr;

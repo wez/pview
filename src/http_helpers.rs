@@ -1,17 +1,5 @@
 use anyhow::Context;
 
-pub async fn post<T: reqwest::IntoUrl, B: serde::Serialize>(
-    url: T,
-    body: &B,
-) -> reqwest::Result<reqwest::Response> {
-    reqwest::Client::builder()
-        .build()?
-        .post(url)
-        .json(body)
-        .send()
-        .await
-}
-
 pub async fn json_body<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> anyhow::Result<T> {
