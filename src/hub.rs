@@ -4,6 +4,7 @@ use crate::http_helpers::{get_request_with_json_response, request_with_json_resp
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 #[derive(Debug, Clone)]
@@ -21,6 +22,30 @@ impl Hub {
         resp.room_data
             .sort_by_key(|item| (item.order, item.name.to_string()));
         Ok(resp.room_data)
+    }
+
+    pub async fn list_scenes(&self) -> anyhow::Result<Vec<Scene>> {
+        let mut resp: ScenesResponse =
+            get_request_with_json_response(self.url("api/scenes")).await?;
+        resp.scene_data
+            .sort_by_key(|item| (item.order, item.name.clone()));
+
+        Ok(resp.scene_data)
+    }
+
+    pub async fn list_scene_members(&self) -> anyhow::Result<HashMap<i32, Vec<SceneMember>>> {
+        let resp: SceneMembersResponse =
+            get_request_with_json_response(self.url("api/scenemembers")).await?;
+
+        let mut by_scene = HashMap::new();
+        for member in resp.scene_member_data {
+            by_scene
+                .entry(member.scene_id)
+                .or_insert_with(|| vec![])
+                .push(member);
+        }
+
+        Ok(by_scene)
     }
 
     pub async fn list_shades(
@@ -109,6 +134,30 @@ impl Hub {
         )
         .await?;
         Ok(response.shade)
+    }
+
+    /// Returns the list of affected shades
+    pub async fn activate_scene(&self, scene_id: i32) -> anyhow::Result<Vec<i32>> {
+        let url = self.url(&format!("api/scenes?sceneId={scene_id}"));
+
+        #[derive(Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        struct Response {
+            shade_ids: Vec<i32>,
+        }
+        let response: Response = get_request_with_json_response(url).await?;
+
+        Ok(response.shade_ids)
+    }
+
+    pub async fn scene_by_name(&self, name: &str) -> anyhow::Result<Scene> {
+        let scenes = self.list_scenes().await?;
+        for s in scenes {
+            if s.name.eq_ignore_ascii_case(name) {
+                return Ok(s);
+            }
+        }
+        anyhow::bail!("No scene with name matching '{name}' was found");
     }
 
     pub async fn shade_by_name(&self, name: &str) -> anyhow::Result<ResolvedShadeData> {

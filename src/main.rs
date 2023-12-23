@@ -1,6 +1,6 @@
 use crate::api_types::ShadeUpdateMotion;
 use clap::Parser;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use tabout::{Alignment, Column};
 use tokio::sync::Mutex;
 
@@ -18,6 +18,68 @@ pub struct Args {
 
     #[clap(skip)]
     hub: Mutex<Option<Hub>>,
+}
+
+#[derive(Parser, Debug)]
+pub struct ListScenesCommand {
+    /// Only return shades in the specified room
+    #[clap(long)]
+    room: Option<String>,
+}
+
+impl ListScenesCommand {
+    pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
+        let hub = args.hub().await?;
+        let mut scenes = hub.list_scenes().await?;
+
+        if let Some(room) = &self.room {
+            let room = hub.room_by_name(room).await?;
+            scenes.retain(|scene| scene.room_id == room.id);
+        }
+
+        let shade_by_id: HashMap<_, _> = hub
+            .list_shades(None, None)
+            .await?
+            .into_iter()
+            .map(|shade| (shade.id, shade))
+            .collect();
+
+        let mut members_by_scene = hub.list_scene_members().await?;
+
+        let columns = &[
+            Column {
+                name: "SCENE/SHADES".to_string(),
+                alignment: Alignment::Left,
+            },
+            Column {
+                name: "POSITION".to_string(),
+                alignment: Alignment::Right,
+            },
+        ];
+        let mut rows = vec![];
+
+        for scene in scenes {
+            rows.push(vec![scene.name.to_string()]);
+            if let Some(members) = members_by_scene.get_mut(&scene.id) {
+                members.sort_by_key(|m| {
+                    let shade = &shade_by_id[&m.shade_id];
+                    (shade.order, shade.name())
+                });
+
+                for m in members {
+                    let shade = &shade_by_id[&m.shade_id];
+                    rows.push(vec![
+                        format!("    {}", shade.name()),
+                        m.positions.describe(),
+                    ]);
+                }
+            }
+            rows.push(vec![]);
+        }
+        println!("{}", tabout::tabulate_output_as_string(columns, &rows)?);
+
+        Ok(())
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -59,35 +121,27 @@ impl ListShadesCommand {
             },
             Column {
                 name: "POSITION".to_string(),
-                alignment: Alignment::Left,
-            },
-            Column {
-                name: "POWER".to_string(),
-                alignment: Alignment::Left,
+                alignment: Alignment::Right,
             },
         ];
         let mut rows = vec![];
         for room_data in &rooms {
             if let Some(shades) = shades_by_room.get(&room_data.id) {
                 for shade in shades {
-                    rows.push(vec![
-                        room_data.name.to_string(),
-                        shade.name().to_string(),
-                        shade
-                            .positions
-                            .as_ref()
-                            .map(|p| p.position_1.to_string())
-                            .unwrap_or_else(String::new),
-                        format!("{:?}", shade.battery_kind),
-                    ]);
-
-                    if let Some(pos) = shade.positions.as_ref().and_then(|p| p.position_2) {
+                    if let Some(pos) = shade.positions.as_ref() {
                         rows.push(vec![
                             room_data.name.to_string(),
-                            shade.secondary_name(),
-                            pos.to_string(),
-                            format!("{:?}", shade.battery_kind),
+                            shade.name().to_string(),
+                            pos.describe_pos1(),
                         ]);
+
+                        if pos.pos_kind_2.is_some() {
+                            rows.push(vec![
+                                room_data.name.to_string(),
+                                shade.secondary_name(),
+                                pos.describe_pos2(),
+                            ]);
+                        }
                     }
                 }
             }
@@ -164,18 +218,41 @@ impl MoveShadeCommand {
 }
 
 #[derive(Parser, Debug)]
+pub struct ActivateSceneCommand {
+    /// The name or id of the shade to inspect.
+    /// Names will be compared ignoring case.
+    name: String,
+}
+
+impl ActivateSceneCommand {
+    pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
+        let hub = args.hub().await?;
+
+        let scene = hub.scene_by_name(&self.name).await?;
+        let shades = hub.activate_scene(scene.id).await?;
+
+        println!("{shades:#?}");
+        Ok(())
+    }
+}
+
+#[derive(Parser, Debug)]
 pub enum SubCommand {
+    ListScenes(ListScenesCommand),
     ListShades(ListShadesCommand),
     InspectShade(InspectShadeCommand),
     MoveShade(MoveShadeCommand),
+    ActivateScene(ActivateSceneCommand),
 }
 
 impl SubCommand {
     pub async fn run(&self, args: &Args) -> anyhow::Result<()> {
         match self {
+            Self::ListScenes(cmd) => cmd.run(args).await,
             Self::ListShades(cmd) => cmd.run(args).await,
             Self::InspectShade(cmd) => cmd.run(args).await,
             Self::MoveShade(cmd) => cmd.run(args).await,
+            Self::ActivateScene(cmd) => cmd.run(args).await,
         }
     }
 }

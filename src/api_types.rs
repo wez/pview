@@ -17,6 +17,12 @@ pub struct RoomResponse {
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Base64Name(String);
 
+impl std::fmt::Display for Base64Name {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(fmt)
+    }
+}
+
 impl Base64Name {
     pub fn as_str(&self) -> &str {
         &self.0
@@ -155,9 +161,41 @@ pub struct ShadeFirmware {
 #[serde(deny_unknown_fields)]
 pub struct ShadePosition {
     pub pos_kind_1: PositionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub pos_kind_2: Option<PositionKind>,
     pub position_1: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub position_2: Option<u16>,
+}
+
+impl ShadePosition {
+    pub fn describe(&self) -> String {
+        if let Some(pos2) = self.position_2 {
+            format!(
+                "{} {}",
+                self.describe_pos(self.position_1),
+                self.describe_pos(pos2)
+            )
+        } else {
+            self.describe_pos(self.position_1)
+        }
+    }
+
+    pub fn describe_pos1(&self) -> String {
+        self.describe_pos(self.position_1)
+    }
+
+    pub fn describe_pos2(&self) -> String {
+        if let Some(pos2) = self.position_2 {
+            self.describe_pos(pos2)
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn describe_pos(&self, pos: u16) -> String {
+        format!("{}%", 100u32 * pos as u32 / u16::max_value() as u32)
+    }
 }
 
 #[derive(Serialize_repr, Deserialize_repr, Debug, Clone, Copy)]
@@ -307,4 +345,47 @@ pub enum ShadeUpdateMotion {
     RightTilt,
     Stop,
     Up,
+    Calibrate,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct Scene {
+    pub color_id: i32,
+    pub icon_id: i32,
+    pub id: i32,
+    pub name: Base64Name,
+    pub network_number: i32,
+    pub order: i32,
+    pub room_id: i32,
+    pub hk_assist: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ScenesResponse {
+    pub scene_data: Vec<Scene>,
+    pub scene_ids: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct SceneMember {
+    pub id: i32,
+    pub scene_id: i32,
+    pub shade_id: i32,
+    #[serde(rename = "type")]
+    pub member_type: i32,
+    pub positions: ShadePosition,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct SceneMembersResponse {
+    pub scene_member_data: Vec<SceneMember>,
+    pub scene_member_ids: Vec<u32>,
 }
