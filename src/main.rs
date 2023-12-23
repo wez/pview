@@ -64,10 +64,6 @@ impl ListShadesCommand {
                 alignment: Alignment::Left,
             },
             Column {
-                name: "SECONDARY".to_string(),
-                alignment: Alignment::Left,
-            },
-            Column {
                 name: "POWER".to_string(),
                 alignment: Alignment::Left,
             },
@@ -76,28 +72,25 @@ impl ListShadesCommand {
         for room_data in &rooms {
             if let Some(shades) = shades_by_room.get(&room_data.id) {
                 for shade in shades {
-                    let (pos1, pos2) = match &shade.positions {
-                        Some(p) => (
-                            p.position_1.to_string(),
-                            p.position_2
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(String::new),
-                        ),
-                        None => (String::new(), String::new()),
-                    };
-
                     rows.push(vec![
                         room_data.name.to_string(),
+                        shade.name().to_string(),
                         shade
-                            .name
+                            .positions
                             .as_ref()
-                            .map(|s| s.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        pos1,
-                        pos2,
+                            .map(|p| p.position_1.to_string())
+                            .unwrap_or_else(String::new),
                         format!("{:?}", shade.battery_kind),
                     ]);
+
+                    if let Some(pos) = shade.positions.as_ref().and_then(|p| p.position_2) {
+                        rows.push(vec![
+                            room_data.name.to_string(),
+                            shade.secondary_name(),
+                            pos.to_string(),
+                            format!("{:?}", shade.battery_kind),
+                        ]);
+                    }
                 }
             }
         }

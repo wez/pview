@@ -116,6 +116,20 @@ pub struct ShadeData {
     pub shade_type: ShadeType,
 }
 
+impl ShadeData {
+    pub fn name(&self) -> &str {
+        self.name.as_ref().map(|s| s.as_str()).unwrap_or("unknown")
+    }
+
+    pub fn secondary_name(&self) -> String {
+        if let Some(name) = &self.secondary_name {
+            name.as_str().to_string()
+        } else {
+            format!("{} Middle Rail", self.name())
+        }
+    }
+}
+
 #[derive(Serialize_repr, Deserialize_repr, Debug)]
 #[repr(i32)]
 pub enum BatteryStatus {

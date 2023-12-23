@@ -61,15 +61,11 @@ impl Hub {
     pub async fn shade_by_name(&self, name: &str) -> anyhow::Result<ShadeData> {
         let shades = self.list_shades(None, None).await?;
         for shade in shades {
-            if let Some(shade_name) = &shade.name {
-                if shade_name.as_str().eq_ignore_ascii_case(name) {
-                    return Ok(shade);
-                }
+            if shade.name().eq_ignore_ascii_case(name) {
+                return Ok(shade);
             }
-            if let Some(shade_name) = &shade.secondary_name {
-                if shade_name.as_str().eq_ignore_ascii_case(name) {
-                    return Ok(shade);
-                }
+            if shade.secondary_name().as_str().eq_ignore_ascii_case(name) {
+                return Ok(shade);
             }
             if shade.id.to_string() == name {
                 return Ok(shade);
