@@ -25,6 +25,8 @@ pub enum SubCommand {
     InspectShade(commands::inspect_shade::InspectShadeCommand),
     MoveShade(commands::move_shade::MoveShadeCommand),
     ActivateScene(commands::activate_scene::ActivateSceneCommand),
+    ServeMqtt(commands::serve_mqtt::ServeMqttCommand),
+    HubInfo(commands::hub_info::HubInfoCommand),
 }
 
 impl SubCommand {
@@ -35,6 +37,8 @@ impl SubCommand {
             Self::InspectShade(cmd) => cmd.run(args).await,
             Self::MoveShade(cmd) => cmd.run(args).await,
             Self::ActivateScene(cmd) => cmd.run(args).await,
+            Self::ServeMqtt(cmd) => cmd.run(args).await,
+            Self::HubInfo(cmd) => cmd.run(args).await,
         }
     }
 }

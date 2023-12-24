@@ -181,6 +181,18 @@ impl ShadePosition {
         }
     }
 
+    fn pos_percent(pos: u16) -> u8 {
+        (100u32 * pos as u32 / u16::max_value() as u32) as u8
+    }
+
+    pub fn pos1_percent(&self) -> u8 {
+        Self::pos_percent(self.position_1)
+    }
+
+    pub fn pos2_percent(&self) -> Option<u8> {
+        self.position_2.map(Self::pos_percent)
+    }
+
     pub fn describe_pos1(&self) -> String {
         self.describe_pos(self.position_1)
     }
@@ -194,7 +206,7 @@ impl ShadePosition {
     }
 
     pub fn describe_pos(&self, pos: u16) -> String {
-        format!("{}%", 100u32 * pos as u32 / u16::max_value() as u32)
+        format!("{}%", Self::pos_percent(pos))
     }
 }
 
@@ -388,4 +400,92 @@ pub struct SceneMember {
 pub struct SceneMembersResponse {
     pub scene_member_data: Vec<SceneMember>,
     pub scene_member_ids: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UserDataResponse {
+    pub user_data: UserData,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct UserData {
+    pub hub_name: Base64Name,
+    pub local_time_data_set: bool,
+    pub enable_scheduled_events: bool,
+    pub editing_enabled: bool,
+    pub setup_completed: bool,
+    /// network router gateway
+    pub gateway: String,
+    /// dns server
+    pub dns: String,
+    /// whether the IP is statically configured
+    pub static_ip: bool,
+    #[serde(rename = "_id")]
+    pub id: String,
+    /// The color of the light and repeaters
+    pub color: Color,
+    pub auto_backup: bool,
+    /// Current ip address
+    pub ip: String,
+    pub mac_address: String,
+    /// netmask
+    pub mask: String,
+    /// whether it is in AP mode
+    pub wireless: bool,
+    /// the ssid of AP mode
+    pub ssid: String,
+    pub firmware: FirmwareInfo,
+    pub serial_number: String,
+    #[serde(rename = "rfIDInt")]
+    pub rf_id_int: u32,
+    #[serde(rename = "rfID")]
+    pub rf_id: String,
+    pub rf_status: i32,
+    pub times: TimeConfiguration,
+    pub brand: String,
+    pub rc_up: bool,
+    pub remote_connect_enabled: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct FirmwareInfo {
+    pub main_processor: MainProcessorFirmware,
+    pub radio: MainProcessorFirmware,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct MainProcessorFirmware {
+    pub name: Option<String>,
+    pub revision: i32,
+    pub sub_revision: i32,
+    pub build: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct Color {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub brightness: u8,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct TimeConfiguration {
+    pub timezone: String,
+    pub local_sunrise_time_in_minutes: i64,
+    pub local_sunset_time_in_minutes: i64,
+    pub current_offset: i64,
+    pub longitude: f64,
+    pub latitude: f64,
 }

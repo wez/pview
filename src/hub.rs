@@ -160,6 +160,19 @@ impl Hub {
         anyhow::bail!("No scene with name matching '{name}' was found");
     }
 
+    pub async fn shade_by_id(&self, shade_id: i32) -> anyhow::Result<ShadeData> {
+        let url = self.url(&format!("api/shades/{shade_id}"));
+
+        #[derive(Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        struct Response {
+            shade: ShadeData,
+        }
+        let response: Response = get_request_with_json_response(url).await?;
+
+        Ok(response.shade)
+    }
+
     pub async fn shade_by_name(&self, name: &str) -> anyhow::Result<ResolvedShadeData> {
         let shades = self.list_shades(None, None).await?;
         for shade in shades {
@@ -176,6 +189,12 @@ impl Hub {
         anyhow::bail!(
             "No shade with name, secondary name or id matching provided '{name}' was found"
         );
+    }
+
+    pub async fn get_user_data(&self) -> anyhow::Result<UserData> {
+        let resp: UserDataResponse =
+            get_request_with_json_response(self.url("api/userdata")).await?;
+        Ok(resp.user_data)
     }
 }
 

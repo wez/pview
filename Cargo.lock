@@ -609,6 +609,7 @@ dependencies = [
  "bitflags 2.4.1",
  "clap",
  "data-encoding",
+ "mosquitto-rs",
  "reqwest",
  "serde",
  "serde_json",
@@ -799,6 +800,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
+name = "libmosquitto-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cba85d7aa02eb4beb97bd229a5c9d1971e34e072a6e42c7894c9e435031067bc"
+dependencies = [
+ "cc",
+ "openssl-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "libredox"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -869,6 +881,19 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mosquitto-rs"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899d3c62b572b73e08a112b19f282e1ead053c69a37fd08f5dad1bd18aeec38f"
+dependencies = [
+ "async-channel",
+ "lazy_static",
+ "libc",
+ "libmosquitto-sys",
+ "thiserror",
 ]
 
 [[package]]
