@@ -88,13 +88,13 @@ $ pview --help
 Usage: pview <COMMAND>
 
 Commands:
-  list-scenes
-  list-shades
-  inspect-shade
-  move-shade
-  activate-scene
-  serve-mqtt
-  hub-info
+  list-scenes     List scenes and their associated shades
+  list-shades     List shades and their current positions
+  inspect-shade   Show diagnostic information about a shade
+  move-shade      Move or set the position of a shade
+  activate-scene  Activate a scene
+  serve-mqtt      Launch the pv2mqtt bridge, adding your hub to Home Assistant
+  hub-info        Show diagnostic information for the hub
   help            Print this message or the help of the given subcommand(s)
 
 Options:
@@ -105,6 +105,7 @@ Options:
 
 ```console
 $ pview list-shades --help
+List shades and their current positions
 Usage: pview list-shades [OPTIONS]
 
 Options:
@@ -128,6 +129,7 @@ Bedroom 1        Bedroom 1 Right Middle Rail              25%
 #### Moving a Shade
 
 ```console
+Move or set the position of a shade
 $ pview move-shade --help
 Usage: pview move-shade <--motion <MOTION>|--percent <PERCENT>> <NAME>
 
@@ -148,6 +150,7 @@ $ pview move-shade --motion up "bedroom 1 left"
 
 ```console
 $ pview inspect-shade --help
+Show diagnostic information about a shade
 Usage: pview inspect-shade <NAME>
 
 Arguments:
@@ -215,6 +218,7 @@ Primary(
 
 ```console
 $ pview list-scenes --help
+List scenes and their associated shades
 Usage: pview list-scenes [OPTIONS]
 
 Options:
@@ -234,6 +238,7 @@ Open Guest
 
 ```console
 $ pview activate-scene --help
+Activate a scene
 Usage: pview activate-scene <NAME>
 
 Arguments:
@@ -247,6 +252,7 @@ Options:
 
 ```console
 $ pview hub-info --help
+Show diagnostic information for the hub
 Usage: pview hub-info
 
 Options:
@@ -257,6 +263,7 @@ Options:
 
 ```console
 $ pview serve-mqtt --help
+Launch the pv2mqtt bridge, adding your hub to Home Assistant
 Usage: pview serve-mqtt [OPTIONS]
 
 Options:
