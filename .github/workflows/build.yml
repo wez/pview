@@ -1,4 +1,14 @@
-on: push
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.*"
+      - ".github/workflows/build.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+
 jobs:
   build:
     runs-on: ubuntu-latest
