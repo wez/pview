@@ -230,7 +230,7 @@ impl ServeMqttCommand {
             .collect();
 
         for shade in &shades {
-            if shade.name() != "Picture Left" {
+            if !shade.name().contains("Study") {
                 continue;
             }
 
@@ -363,10 +363,8 @@ impl ServeMqttCommand {
         Ok(())
     }
 
-    async fn setup_http_server(&self, hub: &Hub, tx: Sender<ServerEvent>) -> anyhow::Result<()> {
+    async fn setup_http_server(&self, tx: Sender<ServerEvent>) -> anyhow::Result<u16> {
         // Figure out our local ip when talking to the hub
-        let hub_bind_addr = hub.suggest_bind_address().await?;
-
         use axum::extract::State;
         use axum::http::StatusCode;
         use axum::response::{IntoResponse, Response};
@@ -413,13 +411,11 @@ impl ServeMqttCommand {
             .route("/pv-postback", post(pv_postback))
             .with_state(tx);
 
-        let listener = tokio::net::TcpListener::bind((hub_bind_addr, 0)).await?;
+        let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0)).await?;
         let addr = listener.local_addr()?;
         log::info!("http server addr is {addr:?}");
-        hub.enable_home_automation_hook(&format!("{addr}/pv-postback"))
-            .await?;
         tokio::spawn(async { axum::serve(listener, app).await });
-        Ok(())
+        Ok(addr.port())
     }
 
     async fn register_with_hass(&self, hub: &Hub, client: &mut Client) -> anyhow::Result<()> {
@@ -438,7 +434,8 @@ impl ServeMqttCommand {
 
         let hub = args.hub().await?;
 
-        self.setup_http_server(&hub, tx.clone()).await?;
+        let http_port = self.setup_http_server(tx.clone()).await?;
+        self.update_homeautomation_hook(&hub, http_port).await?;
 
         let mut client = Client::with_auto_id()?;
 
@@ -502,7 +499,7 @@ impl ServeMqttCommand {
             }
         });
 
-        self.serve(hub, client, rx).await
+        self.serve(hub, client, rx, http_port).await
     }
 
     async fn handle_mqtt_message(
@@ -634,11 +631,19 @@ impl ServeMqttCommand {
         Ok(())
     }
 
+    async fn update_homeautomation_hook(&self, hub: &Hub, http_port: u16) -> anyhow::Result<()> {
+        let addr = hub.suggest_bind_address().await?;
+        hub.enable_home_automation_hook(&format!("{addr}:{http_port}/pv-postback"))
+            .await?;
+        Ok(())
+    }
+
     async fn serve(
         &self,
         mut hub: Hub,
         mut client: Client,
         mut rx: Receiver<ServerEvent>,
+        http_port: u16,
     ) -> anyhow::Result<()> {
         log::info!("Waiting for mqtt and pv messages");
         while let Some(msg) = rx.recv().await {
@@ -662,6 +667,7 @@ impl ServeMqttCommand {
                 ServerEvent::PeriodicDisco => match Hub::discover().await {
                     Ok(new_hub) => {
                         hub = new_hub;
+                        self.update_homeautomation_hook(&hub, http_port).await?;
                         self.register_with_hass(&hub, &mut client).await?;
                     }
                     Err(err) => {
