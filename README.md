@@ -83,7 +83,200 @@ You can then install `target/release/pview` wherever you like.
 
 ### Running it
 
-To start the bridge:
+```console
+$ pview --help
+Usage: pview <COMMAND>
+
+Commands:
+  list-scenes
+  list-shades
+  inspect-shade
+  move-shade
+  activate-scene
+  serve-mqtt
+  hub-info
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+#### Listing Shades
+
+```console
+$ pview list-shades --help
+Usage: pview list-shades [OPTIONS]
+
+Options:
+      --room <ROOM>  Only return shades in the specified room
+  -h, --help         Print help
+```
+
+```console
+$ pview list-shades
+ROOM             SHADE                               POSITION
+Zen Room         Zen Room Middle                           0%
+Zen Room         Zen Room Middle Middle Rail              26%
+Zen Room         Zen Room Right                            0%
+Zen Room         Zen Room Right Middle Rail               25%
+Bedroom 1        BedRoom 1 Left                            0%
+Bedroom 1        BedRoom 1 Left Middle Rail               25%
+Bedroom 1        Bedroom 1 Right                           0%
+Bedroom 1        Bedroom 1 Right Middle Rail              25%
+```
+
+#### Moving a Shade
+
+```console
+$ pview move-shade --help
+Usage: pview move-shade <--motion <MOTION>|--percent <PERCENT>> <NAME>
+
+Arguments:
+  <NAME>  The name or id of the shade to open. Names will be compared ignoring case
+
+Options:
+      --motion <MOTION>    [possible values: down, heart, jog, left-tilt, right-tilt, stop, up, calibrate]
+      --percent <PERCENT>
+  -h, --help               Print help
+```
+
+```console
+$ pview move-shade --motion up "bedroom 1 left"
+```
+
+#### Inspecting a Shade
+
+```console
+$ pview inspect-shade --help
+Usage: pview inspect-shade <NAME>
+
+Arguments:
+  <NAME>  The name or id of the shade to inspect. Names will be compared ignoring case
+
+Options:
+  -h, --help  Print help
+```
+
+```console
+$ pview inspect-shade "Zen room middle"
+Primary(
+    ShadeData {
+        battery_status: High,
+        battery_strength: 181,
+        firmware: Some(
+            ShadeFirmware {
+                build: 3147,
+                index: Some(
+                    3,
+                ),
+                revision: 2,
+                sub_revision: 3,
+            },
+        ),
+        capabilities: TopDownBottomUp,
+        battery_kind: HardWiredPowerSupply,
+        smart_power_supply: SmartPowerSupply {
+            status: 0,
+            id: 0,
+            port: 0,
+        },
+        signal_strength: None,
+        motor: None,
+        group_id: 37321,
+        id: 59066,
+        name: Some(
+            Base64Name(
+                "Zen Room Middle",
+            ),
+        ),
+        order: None,
+        positions: Some(
+            ShadePosition {
+                pos_kind_1: PrimaryRail,
+                pos_kind_2: Some(
+                    SecondaryRail,
+                ),
+                position_1: 0,
+                position_2: Some(
+                    17040,
+                ),
+            },
+        ),
+        room_id: Some(
+            60490,
+        ),
+        secondary_name: None,
+        shade_type: DuetteTopDownBottomUp,
+    },
+)
+```
+
+#### Working with Scenes
+
+```console
+$ pview list-scenes --help
+Usage: pview list-scenes [OPTIONS]
+
+Options:
+      --room <ROOM>  Only return shades in the specified room
+  -h, --help         Print help
+```
+
+```
+$ pview list-scenes
+SCENE/SHADES                     POSITION
+Open Guest
+    BedRoom 1 Left                 0% 25%
+    Bedroom 1 Right                0% 25%
+    Zen Room Middle                0% 25%
+    Zen Room Right                 0% 25%
+```
+
+```console
+$ pview activate-scene --help
+Usage: pview activate-scene <NAME>
+
+Arguments:
+  <NAME>  The name or id of the shade to inspect. Names will be compared ignoring case
+
+Options:
+  -h, --help  Print help
+```
+
+#### Getting Hub Information
+
+```console
+$ pview hub-info --help
+Usage: pview hub-info
+
+Options:
+  -h, --help  Print help
+```
+
+#### Running the MQTT Bridge
+
+```console
+$ pview serve-mqtt --help
+Usage: pview serve-mqtt [OPTIONS]
+
+Options:
+      --host <HOST>
+          The mqtt broker hostname or address. You may also set this via the PV_MQTT_HOST environment variable
+      --port <PORT>
+          The mqtt broker port You may also set this via the PV_MQTT_PORT environment variable. If unspecified, uses 1883
+      --username <USERNAME>
+          The username to authenticate against the broker You may also set this via the PV_MQTT_USER environment variable
+      --password <PASSWORD>
+          The password to authenticate against the broker You may also set this via the PV_MQTT_PASSWORD environment variable
+      --bind-address <BIND_ADDRESS>
+
+      --discovery-prefix <DISCOVERY_PREFIX>
+          [default: homeassistant]
+  -h, --help
+          Print help
+```
+
+Recommendation is to put the mqtt options into a `.env` file and launch without parameters:
 
 ```console
 $ pview serve-mqtt
