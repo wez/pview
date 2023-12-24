@@ -140,6 +140,66 @@ impl ServeMqttCommand {
         Ok(())
     }
 
+    async fn register_scenes(
+        &self,
+        user_data: &UserData,
+        hub: &Hub,
+        reg: &mut HassRegistration<'_>,
+    ) -> anyhow::Result<()> {
+        let scenes = hub.list_scenes().await?;
+        let room_by_id: HashMap<_, _> = hub
+            .list_rooms()
+            .await?
+            .into_iter()
+            .map(|room| (room.id, room.name))
+            .collect();
+
+        for scene in scenes {
+            let scene_id = scene.id;
+            let scene_name = scene.name.to_string();
+
+            let area = room_by_id
+                .get(&scene.room_id)
+                .map(|name| serde_json::json!(name.as_str()))
+                .unwrap_or(serde_json::Value::Null);
+
+            if !scene_name.contains("Study") {
+                continue;
+            }
+
+            let unique_id = format!("{}-scene-{scene_id}", user_data.serial_number);
+
+            let data = serde_json::json!({
+                "name": serde_json::Value::Null,
+                "unique_id": unique_id,
+                "availability_topic": format!("pv2mqtt/scene/{scene_id}/availability"),
+                "command_topic": format!("pv2mqtt/scene/{scene_id}/set"),
+                "payload_on": "ON",
+                "device": {
+                    "suggested_area": area,
+                    "identifiers": [
+                        unique_id,
+                    ],
+                    "via_device": format!("pv2mqtt-{}", user_data.serial_number),
+                    "name": scene_name,
+                    "manufacturer": "Wez Furlong",
+                    "model": "pv2mqtt",
+                },
+            });
+
+            // Tell hass about this shade
+            reg.config(
+                format!("{}/scene/{unique_id}/config", self.discovery_prefix),
+                serde_json::to_string(&data)?,
+            )
+            .await?;
+
+            reg.update(format!("pv2mqtt/scene/{scene_id}/availability"), "online");
+        }
+
+        Ok(())
+    }
+
     async fn register_shades(
         &self,
         user_data: &UserData,
@@ -342,6 +402,7 @@ impl ServeMqttCommand {
 
         self.register_hub(&user_data, &mut reg).await?;
         self.register_shades(&user_data, &hub, &mut reg).await?;
+        self.register_scenes(&user_data, &hub, &mut reg).await?;
         // Give home assistant some time to process the configuration
         // messages before attempting to notify of availability and
         // other updates
@@ -391,6 +452,9 @@ impl ServeMqttCommand {
         client
             .subscribe("pv2mqtt/shade/+/command", QoS::AtMostOnce)
             .await?;
+        client
+            .subscribe("pv2mqtt/scene/+/set", QoS::AtMostOnce)
+            .await?;
 
         self.register_with_hass(&hub, &mut client).await?;
 
@@ -419,54 +483,68 @@ impl ServeMqttCommand {
         }
 
         let topic: Vec<_> = msg.topic.split('/').collect();
-        if let [_, _device_kind, shade_id, kind] = topic.as_slice() {
-            let (actual_shade_id, is_secondary) =
-                if let Some(id) = shade_id.strip_suffix(SECONDARY_SUFFIX) {
-                    (id.parse::<i32>()?, true)
-                } else {
-                    (shade_id.parse::<i32>()?, false)
-                };
+        if let [_, device_kind, target_id, kind] = topic.as_slice() {
+            match *device_kind {
+                "shade" => {
+                    let shade_id = target_id;
+                    let (actual_shade_id, is_secondary) =
+                        if let Some(id) = shade_id.strip_suffix(SECONDARY_SUFFIX) {
+                            (id.parse::<i32>()?, true)
+                        } else {
+                            (shade_id.parse::<i32>()?, false)
+                        };
 
-            let shade = hub.shade_by_id(actual_shade_id).await?;
+                    let shade = hub.shade_by_id(actual_shade_id).await?;
 
-            let payload = String::from_utf8_lossy(&msg.payload);
-            log::debug!("{kind} Cover: {shade_id} 2nd={is_secondary}, payload={payload}");
-            match kind.as_ref() {
-                "set_position" => {
-                    let position: u8 = payload.parse()?;
+                    let payload = String::from_utf8_lossy(&msg.payload);
+                    log::debug!("{kind} Cover: {shade_id} 2nd={is_secondary}, payload={payload}");
+                    match kind.as_ref() {
+                        "set_position" => {
+                            let position: u8 = payload.parse()?;
 
-                    let mut shade_pos = shade.positions.clone().ok_or_else(|| {
-                        anyhow::anyhow!("shade {actual_shade_id} has no existing position")
-                    })?;
+                            let mut shade_pos = shade.positions.clone().ok_or_else(|| {
+                                anyhow::anyhow!("shade {actual_shade_id} has no existing position")
+                            })?;
 
-                    let absolute = ShadePosition::percent_to_pos(position);
+                            let absolute = ShadePosition::percent_to_pos(position);
 
-                    if is_secondary {
-                        shade_pos.position_2.replace(absolute);
-                    } else {
-                        shade_pos.position_1 = absolute;
+                            if is_secondary {
+                                shade_pos.position_2.replace(absolute);
+                            } else {
+                                shade_pos.position_1 = absolute;
+                            }
+
+                            hub.change_shade_position(actual_shade_id, shade_pos.clone())
+                                .await?;
+                        }
+                        "command" => match payload.as_ref() {
+                            "OPEN" => {
+                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
+                                    .await?;
+                            }
+                            "CLOSE" => {
+                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
+                                    .await?;
+                            }
+                            "STOP" => {
+                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
+                                    .await?;
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
-
-                    hub.change_shade_position(actual_shade_id, shade_pos.clone())
-                        .await?;
                 }
-                "command" => match payload.as_ref() {
-                    "OPEN" => {
-                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
-                            .await?;
-                    }
-                    "CLOSE" => {
-                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
-                            .await?;
-                    }
-                    "STOP" => {
-                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
-                            .await?;
-                    }
-                    _ => {}
-                },
-                _ => {}
+                "scene" => {
+                    let scene_id = target_id.parse()?;
+                    hub.activate_scene(scene_id).await?;
+                }
+                _ => {
+                    log::error!("device_kind {device_kind} not handled");
+                }
             }
+        } else {
+            log::error!("topic {} not handled", msg.topic);
         }
         Ok(())
     }
