@@ -208,7 +208,7 @@ impl Hub {
     pub async fn enable_home_automation_hook(&self, postback_url: &str) -> anyhow::Result<()> {
         let url = self.url("api/homeautomation");
 
-        let res: serde_json::Value = request_with_json_response(
+        let _res: serde_json::Value = request_with_json_response(
             Method::PUT,
             url,
             &json!({
@@ -219,7 +219,6 @@ impl Hub {
             }),
         )
         .await?;
-        println!("res: {res:?}");
         Ok(())
     }
 }
