@@ -12,6 +12,7 @@ base64 = "0.21.5"
 bitflags = { version = "2.4.1", features = ["serde"] }
 clap = { version = "4.4.0", features = ["derive"] }
 data-encoding = "2.4.0"
+env_logger = "0.10.1"
 log = "0.4.20"
 mosquitto-rs = "0.4.0"
 reqwest = { version = "0.11.20", features = ["json", "rustls-tls"] }
@@ -19,7 +20,6 @@ serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.105"
 serde_repr = "0.1.16"
 serde_urlencoded = "0.7.1"
-simple_logger = "4.3.0"
 tabout = "0.3.0"
 tokio = { version = "1.32.0", features = ["rt", "macros", "rt-multi-thread"] }
 wez-mdns = "0.1.1"
