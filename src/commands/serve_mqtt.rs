@@ -3,9 +3,11 @@ use crate::api_types::{
     ShadeCapabilityFlags, ShadePosition, ShadeUpdateMotion, UserData,
 };
 use crate::hub::Hub;
+use anyhow::Context;
 use mosquitto_rs::*;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -16,18 +18,23 @@ const MODEL: &str = "pv2mqtt";
 
 #[derive(clap::Parser, Debug)]
 pub struct ServeMqttCommand {
-    /// The mqtt broker hostname or address
+    /// The mqtt broker hostname or address.
+    /// You may also set this via the PV_MQTT_HOST environment variable.
     #[arg(long)]
-    host: String,
+    host: Option<String>,
 
     /// The mqtt broker port
-    #[arg(long, default_value = "1883")]
-    port: u16,
+    /// You may also set this via the PV_MQTT_PORT environment variable.
+    /// If unspecified, uses 1883
+    #[arg(long)]
+    port: Option<u16>,
 
     /// The username to authenticate against the broker
+    /// You may also set this via the PV_MQTT_USER environment variable.
     #[arg(long)]
     username: Option<String>,
     /// The password to authenticate against the broker
+    /// You may also set this via the PV_MQTT_PASSWORD environment variable.
     #[arg(long)]
     password: Option<String>,
 
@@ -36,6 +43,21 @@ pub struct ServeMqttCommand {
 
     #[arg(long, default_value = "homeassistant")]
     discovery_prefix: String,
+}
+
+fn opt_env_var<T: FromStr>(name: &str) -> anyhow::Result<Option<T>>
+where
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    match std::env::var(name) {
+        Ok(p) => {
+            Ok(Some(p.parse().map_err(|err| {
+                anyhow::anyhow!("parsing ${{name}}: {err:#}")
+            })?))
+        }
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => anyhow::bail!("PV_MQTT_PORT is invalid"),
+    }
 }
 
 #[derive(Debug)]
@@ -430,6 +452,28 @@ impl ServeMqttCommand {
     }
 
     pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
+        let mqtt_host = match &self.host {
+            Some(h) => h.to_string(),
+            None => std::env::var("PV_MQTT_HOST").context(
+                "specify the mqtt host either via the --host \
+                 option or the PV_MQTT_HOST environment variable",
+            )?,
+        };
+
+        let mqtt_port: u16 = match self.port {
+            Some(p) => p,
+            None => opt_env_var("PV_MQTT_PORT")?.unwrap_or(1883),
+        };
+
+        let mqtt_username: Option<String> = match self.username.clone() {
+            Some(u) => Some(u),
+            None => opt_env_var("PV_MQTT_USER")?,
+        };
+        let mqtt_password: Option<String> = match self.password.clone() {
+            Some(u) => Some(u),
+            None => opt_env_var("PV_MQTT_PASSWORD")?,
+        };
+
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
         let hub = args.hub().await?;
@@ -439,15 +483,16 @@ impl ServeMqttCommand {
 
         let mut client = Client::with_auto_id()?;
 
-        client.set_username_and_password(self.username.as_deref(), self.password.as_deref())?;
+        client.set_username_and_password(mqtt_username.as_deref(), mqtt_password.as_deref())?;
         client
             .connect(
-                &self.host,
-                self.port.into(),
+                &mqtt_host,
+                mqtt_port.into(),
                 Duration::from_secs(10),
                 self.bind_address.as_deref(),
             )
-            .await?;
+            .await
+            .with_context(|| format!("connecting to mqtt broker {mqtt_host}:{mqtt_port}"))?;
         let subscriber = client.subscriber().expect("to own the subscriber");
 
         client

@@ -63,6 +63,9 @@ impl Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if let Ok(path) = dotenvy::dotenv() {
+        eprintln!("Loading environment overrides from {path:?}");
+    }
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .parse_env("RUST_LOG")
