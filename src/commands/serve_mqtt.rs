@@ -201,10 +201,6 @@ impl ServeMqttCommand {
                 .map(|name| serde_json::json!(name.as_str()))
                 .unwrap_or(serde_json::Value::Null);
 
-            if !scene_name.contains("Study") {
-                continue;
-            }
-
             let unique_id = format!("{}-scene-{scene_id}", user_data.serial_number);
 
             let data = serde_json::json!({
@@ -252,10 +248,6 @@ impl ServeMqttCommand {
             .collect();
 
         for shade in &shades {
-            if !shade.name().contains("Study") {
-                continue;
-            }
-
             let position = match shade.positions.clone() {
                 Some(p) => p,
                 None => continue,
