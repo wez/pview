@@ -1,3 +1,4 @@
+use crate::api_types::ShadeCapabilityFlags;
 use std::collections::BTreeMap;
 use tabout::{Alignment, Column};
 
@@ -53,8 +54,11 @@ impl ListShadesCommand {
                             shade.name().to_string(),
                             pos.describe_pos1(),
                         ]);
-
-                        if pos.pos_kind_2.is_some() {
+                        if shade
+                            .capabilities
+                            .flags()
+                            .contains(ShadeCapabilityFlags::SECONDARY_RAIL)
+                        {
                             rows.push(vec![
                                 room_data.name.to_string(),
                                 shade.secondary_name(),

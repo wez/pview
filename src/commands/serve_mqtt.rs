@@ -1,6 +1,6 @@
 use crate::api_types::{
-    HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService, ShadePosition,
-    ShadeUpdateMotion, UserData,
+    HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService,
+    ShadeCapabilityFlags, ShadePosition, ShadeUpdateMotion, UserData,
 };
 use crate::hub::Hub;
 use mosquitto_rs::*;
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-const SECONDARY_SUFFIX: &str = "_2";
+const SECONDARY_SUFFIX: &str = "_middle";
 const MODEL: &str = "pv2mqtt";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
@@ -45,46 +45,61 @@ enum ServerEvent {
     PeriodicDisco,
 }
 
-struct MqttMsg {
-    pub topic: String,
-    pub payload: Vec<u8>,
+#[derive(Debug)]
+enum RegEntry {
+    Delay,
+    Msg { topic: String, payload: String },
 }
 
-impl MqttMsg {
-    pub fn new<T: Into<String>, P: Into<Vec<u8>>>(topic: T, payload: P) -> Self {
-        Self {
+impl RegEntry {
+    pub fn msg<T: Into<String>, P: Into<String>>(topic: T, payload: P) -> Self {
+        Self::Msg {
             topic: topic.into(),
             payload: payload.into(),
         }
     }
 }
 
-struct HassRegistration<'a> {
-    pub client: &'a mut Client,
-    pub updates: Vec<MqttMsg>,
+struct HassRegistration {
+    configs: Vec<RegEntry>,
+    updates: Vec<RegEntry>,
 }
 
-impl<'a> HassRegistration<'a> {
-    pub async fn config<T: AsRef<str>, P: AsRef<[u8]>>(
-        &mut self,
-        topic: T,
-        payload: P,
-    ) -> anyhow::Result<()> {
-        self.client
-            .publish(topic.as_ref(), payload.as_ref(), QoS::AtMostOnce, false)
-            .await?;
-        Ok(())
+impl HassRegistration {
+    pub fn new() -> Self {
+        Self {
+            configs: vec![],
+            updates: vec![
+                // Delay between registering configs and advising hass
+                // of the states, so that hass has had enough time
+                // to subscribe to the correct topics
+                RegEntry::Delay,
+            ],
+        }
     }
 
-    pub fn update<T: Into<String>, P: Into<Vec<u8>>>(&mut self, topic: T, payload: P) {
-        self.updates.push(MqttMsg::new(topic, payload));
+    pub fn config<T: Into<String>, P: Into<String>>(&mut self, topic: T, payload: P) {
+        self.configs.push(RegEntry::msg(topic, payload));
     }
 
-    pub async fn apply_updates(&mut self) -> anyhow::Result<()> {
-        for msg in &self.updates {
-            self.client
-                .publish(&msg.topic, &msg.payload, QoS::AtMostOnce, false)
-                .await?;
+    pub fn update<T: Into<String>, P: Into<String>>(&mut self, topic: T, payload: P) {
+        self.updates.push(RegEntry::msg(topic, payload));
+    }
+
+    pub async fn apply_updates(self, client: &mut Client) -> anyhow::Result<()> {
+        for queue in [self.configs, self.updates] {
+            for entry in queue {
+                match entry {
+                    RegEntry::Delay => {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    RegEntry::Msg { topic, payload } => {
+                        client
+                            .publish(&topic, payload.as_bytes(), QoS::AtMostOnce, false)
+                            .await?;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -94,7 +109,7 @@ impl ServeMqttCommand {
     async fn register_hub(
         &self,
         user_data: &UserData,
-        reg: &mut HassRegistration<'_>,
+        reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
         let serial = &user_data.serial_number;
         let data = serde_json::json!({
@@ -126,8 +141,7 @@ impl ServeMqttCommand {
         reg.config(
             format!("{}/sensor/{serial}-hub-ip/config", self.discovery_prefix),
             serde_json::to_string(&data)?,
-        )
-        .await?;
+        );
 
         reg.update(
             format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
@@ -146,7 +160,7 @@ impl ServeMqttCommand {
         &self,
         user_data: &UserData,
         hub: &Hub,
-        reg: &mut HassRegistration<'_>,
+        reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
         let scenes = hub.list_scenes().await?;
         let room_by_id: HashMap<_, _> = hub
@@ -193,8 +207,7 @@ impl ServeMqttCommand {
             reg.config(
                 format!("{}/scene/{unique_id}/config", self.discovery_prefix),
                 serde_json::to_string(&data)?,
-            )
-            .await?;
+            );
 
             reg.update(format!("{MODEL}/scene/{scene_id}/availability"), "online");
         }
@@ -206,7 +219,7 @@ impl ServeMqttCommand {
         &self,
         user_data: &UserData,
         hub: &Hub,
-        reg: &mut HassRegistration<'_>,
+        reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
         let shades = hub.list_shades(None, None).await?;
         let room_by_id: HashMap<_, _> = hub
@@ -217,10 +230,9 @@ impl ServeMqttCommand {
             .collect();
 
         for shade in &shades {
-            if shade.name() != "Study Sheer" {
+            if shade.name() != "Picture Left" {
                 continue;
             }
-            let unique_id = format!("{}-{}", user_data.serial_number, shade.id);
 
             let position = match shade.positions.clone() {
                 Some(p) => p,
@@ -229,16 +241,26 @@ impl ServeMqttCommand {
 
             let mut shades = vec![(
                 shade.id.to_string(),
-                shade.name().to_string(),
-                position.pos1_percent(),
+                serde_json::Value::Null,
+                Some(position.pos1_percent()),
             )];
-            if let Some(pos2) = position.pos2_percent() {
+
+            // The shade data doesn't always include the second rail
+            // position, so we must use the capabilities to decide if
+            // it should actually be there
+            if shade
+                .capabilities
+                .flags()
+                .contains(ShadeCapabilityFlags::SECONDARY_RAIL)
+            {
                 shades.push((
                     format!("{}{SECONDARY_SUFFIX}", shade.id),
-                    shade.secondary_name(),
-                    pos2,
+                    serde_json::json!("Middle Rail"),
+                    position.pos2_percent(),
                 ));
             }
+
+            let device_id = format!("{}-{}", user_data.serial_number, shade.id);
 
             for (shade_id, shade_name, pos) in shades {
                 let area = shade
@@ -249,9 +271,10 @@ impl ServeMqttCommand {
                             .map(|name| serde_json::json!(name.as_str()))
                     })
                     .unwrap_or(serde_json::Value::Null);
+                let unique_id = format!("{}-{shade_id}", user_data.serial_number);
 
                 let data = serde_json::json!({
-                    "name": serde_json::Value::Null,
+                    "name": shade_name ,
                     "device_class": "shade",
                     "unique_id": unique_id,
                     "state_topic": format!("{MODEL}/shade/{shade_id}/state"),
@@ -262,10 +285,10 @@ impl ServeMqttCommand {
                     "device": {
                         "suggested_area": area,
                         "identifiers": [
-                            unique_id
+                            device_id
                         ],
                         "via_device": format!("{MODEL}-{}", user_data.serial_number),
-                        "name": shade_name,
+                        "name": shade.name(),
                         "manufacturer": "Hunter Douglas",
                         "model": MODEL,
                         "sw_version": shade.firmware.as_ref().map(|vers| {
@@ -283,17 +306,22 @@ impl ServeMqttCommand {
                 reg.config(
                     format!("{}/cover/{shade_id}/config", self.discovery_prefix),
                     serde_json::to_string(&data)?,
-                )
-                .await?;
+                );
 
                 reg.update(format!("{MODEL}/shade/{shade_id}/availability"), "online");
 
-                reg.update(
-                    format!("{MODEL}/shade/{shade_id}/position"),
-                    format!("{pos}"),
-                );
-                let state = if pos == 0 { "closed" } else { "open" };
-                reg.update(format!("{MODEL}/shade/{shade_id}/state"), state);
+                // We may not know the position; this can happen when the shade is
+                // partially out of sync, for example, for a top-down-bottom-up
+                // shade, I've seen the primary position reported, but the secondary
+                // is blank
+                if let Some(pos) = pos {
+                    reg.update(
+                        format!("{MODEL}/shade/{shade_id}/position"),
+                        format!("{pos}"),
+                    );
+                    let state = if pos == 0 { "closed" } else { "open" };
+                    reg.update(format!("{MODEL}/shade/{shade_id}/state"), state);
+                }
             }
         }
 
@@ -396,19 +424,12 @@ impl ServeMqttCommand {
 
     async fn register_with_hass(&self, hub: &Hub, client: &mut Client) -> anyhow::Result<()> {
         let user_data = hub.get_user_data().await?;
-        let mut reg = HassRegistration {
-            client,
-            updates: vec![],
-        };
+        let mut reg = HassRegistration::new();
 
         self.register_hub(&user_data, &mut reg).await?;
         self.register_shades(&user_data, &hub, &mut reg).await?;
         self.register_scenes(&user_data, &hub, &mut reg).await?;
-        // Give home assistant some time to process the configuration
-        // messages before attempting to notify of availability and
-        // other updates
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        reg.apply_updates().await?;
+        reg.apply_updates(client).await?;
         Ok(())
     }
 
