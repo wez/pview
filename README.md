@@ -34,7 +34,7 @@ To run the mqtt bridge:
 
 * Prepare a `.env` file with your mqtt information:
 
-```
+```bash
 # If you want to turn up debugging, uncomment the next line
 #RUST_LOG=pview=debug
 # Always colorize output when running in docker
@@ -55,7 +55,7 @@ services:
   pv2mqtt:
     image: ghcr.io/wez/pview:latest
     container_name: pv2mqtt
-    #restart: unless-stopped
+    restart: unless-stopped
     env_file:
       - .env
     # Host networking is required
@@ -70,4 +70,29 @@ $ docker compose up -d
 
 * Your shades and scenes will now populate into home assistant
 
+## Non-Docker
 
+The docker image is currently only built for x86-64. If you run on another
+architecture, or don't want to use docker, then you must build it yourself:
+
+```console
+$ cargo build --release
+```
+
+You can then install `target/release/pview` wherever you like.
+
+### Running it
+
+To start the bridge:
+
+```console
+$ pview serve-mqtt
+```
+
+
+## Limitations
+
+* I can only directly test on the hardware that I have.
+  There is a reasonable chance that if you have shades with
+  tilt or other functionality that the behavior may not be optimal.
+  Please file an issue and be prepared to do grab some diagnostics via `curl`.

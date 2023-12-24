@@ -6,4 +6,5 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Host networking is required
     network_mode: host
