@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  pv2mqtt:
+    image: docker.io/library/pview:latest
+    container_name: pv2mqtt
+    #restart: unless-stopped
+    env_file:
+      - .env
+    network_mode: host
+    #privileged: true
