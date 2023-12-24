@@ -1,5 +1,5 @@
 [package]
-name = "hd-pview"
+name = "pview"
 version = "0.1.0"
 edition = "2021"
 

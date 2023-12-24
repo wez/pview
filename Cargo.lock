@@ -710,29 +710,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604"
 
 [[package]]
-name = "hd-pview"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.21.5",
- "bitflags 2.4.1",
- "clap",
- "data-encoding",
- "env_logger",
- "log",
- "mosquitto-rs",
- "reqwest",
- "serde",
- "serde_json",
- "serde_repr",
- "serde_urlencoded",
- "tabout",
- "tokio",
- "wez-mdns",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1433,6 +1410,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "18fb31db3f9bddb2ea821cde30a9f70117e3f119938b5ee630b7403aa6e2ead9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.21.5",
+ "bitflags 2.4.1",
+ "clap",
+ "data-encoding",
+ "env_logger",
+ "log",
+ "mosquitto-rs",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "serde_urlencoded",
+ "tabout",
+ "tokio",
+ "wez-mdns",
 ]
 
 [[package]]
