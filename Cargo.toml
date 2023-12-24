@@ -1,7 +1,12 @@
 [package]
+authors = ["Wez Furlong"]
+repository = "https://github.com/wez/pview"
+keywords = ["powerview", "home-automation"]
+license = "MIT"
 name = "pview"
 version = "0.1.0"
 edition = "2021"
+description = "PowerView to MQTT bridge for Home Assistant"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
