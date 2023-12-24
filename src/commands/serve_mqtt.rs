@@ -416,6 +416,7 @@ impl ServeMqttCommand {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&body) {
                 let data: Vec<HomeAutomationPostBackData> =
                     serde_json::from_slice(&decoded).map_err(generic)?;
+                log::debug!("postback: {data:?}");
                 tx.send(ServerEvent::HomeAutomationData(data))
                     .await
                     .map_err(generic)?;
@@ -436,7 +437,11 @@ impl ServeMqttCommand {
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0)).await?;
         let addr = listener.local_addr()?;
         log::info!("http server addr is {addr:?}");
-        tokio::spawn(async { axum::serve(listener, app).await });
+        tokio::spawn(async {
+            if let Err(err) = axum::serve(listener, app).await {
+                log::error!("http server stopped: {err:#}");
+            }
+        });
         Ok(addr.port())
     }
 

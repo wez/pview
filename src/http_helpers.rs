@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::time::Duration;
 
 pub async fn json_body<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
@@ -16,6 +17,7 @@ pub async fn get_request_with_json_response<T: reqwest::IntoUrl, R: serde::de::D
     url: T,
 ) -> anyhow::Result<R> {
     let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
         .build()?
         .request(reqwest::Method::GET, url)
         .send()
@@ -56,6 +58,7 @@ pub async fn request_with_json_response<
     body: &B,
 ) -> anyhow::Result<R> {
     let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
         .build()?
         .request(method, url)
         .json(body)
