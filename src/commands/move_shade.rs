@@ -1,4 +1,4 @@
-use crate::api_types::ShadeUpdateMotion;
+use crate::api_types::{ShadePosition, ShadeUpdateMotion};
 
 #[derive(clap::Args, Debug)]
 #[group(required = true)]
@@ -27,7 +27,7 @@ impl MoveShadeCommand {
         let shade = if let Some(motion) = self.target_position.motion {
             hub.move_shade(shade.id, motion).await?
         } else if let Some(percent) = self.target_position.percent {
-            let absolute = ((u16::max_value() as u32) * (percent as u32) / 100u32) as u16;
+            let absolute = ShadePosition::percent_to_pos(percent);
 
             let mut position = shade.positions.clone().ok_or_else(|| {
                 anyhow::anyhow!("shade has no existing position information! {shade:#?}")

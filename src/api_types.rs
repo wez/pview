@@ -181,16 +181,20 @@ impl ShadePosition {
         }
     }
 
-    fn pos_percent(pos: u16) -> u8 {
+    pub fn pos_to_percent(pos: u16) -> u8 {
         (100u32 * pos as u32 / u16::max_value() as u32) as u8
     }
 
+    pub fn percent_to_pos(pct: u8) -> u16 {
+        ((u16::max_value() as u32) * (pct as u32) / 100u32) as u16
+    }
+
     pub fn pos1_percent(&self) -> u8 {
-        Self::pos_percent(self.position_1)
+        Self::pos_to_percent(self.position_1)
     }
 
     pub fn pos2_percent(&self) -> Option<u8> {
-        self.position_2.map(Self::pos_percent)
+        self.position_2.map(Self::pos_to_percent)
     }
 
     pub fn describe_pos1(&self) -> String {
@@ -206,7 +210,7 @@ impl ShadePosition {
     }
 
     pub fn describe_pos(&self, pos: u16) -> String {
-        format!("{}%", Self::pos_percent(pos))
+        format!("{}%", Self::pos_to_percent(pos))
     }
 }
 
@@ -488,4 +492,47 @@ pub struct TimeConfiguration {
     pub current_offset: i64,
     pub longitude: f64,
     pub latitude: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct HomeAutomationPostBackData {
+    pub duration_ms: Option<i64>,
+    pub remaining_duration_ms: Option<i64>,
+    pub initial_position: Option<u8>,
+    pub service: HomeAutomationService,
+    pub shade_id: i32,
+    pub target_position: Option<u8>,
+    pub current_position: Option<u8>,
+    #[serde(rename = "type")]
+    pub record_type: HomeAutomationRecordType,
+    pub stopped_position: Option<u8>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, clap::ValueEnum)]
+#[serde(rename_all = "camelCase")]
+pub enum HomeAutomationService {
+    Primary,
+    Secondary,
+}
+
+// Note that the order of the enum variants is significant!
+// We want the final state items to sort after the others,
+// otherwise we'll send incorrect state updates to hass.
+#[derive(
+    Serialize, Deserialize, Debug, Clone, Copy, clap::ValueEnum, Ord, PartialOrd, Eq, PartialEq,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum HomeAutomationRecordType {
+    StartsOpening,
+    StartsClosing,
+    BeginsMoving,
+    TargetLevelChanged,
+    LevelChanged,
+    HasOpened,
+    HasFullyOpened,
+    HasFullyClosed,
+    HasClosed,
+    Stops,
 }

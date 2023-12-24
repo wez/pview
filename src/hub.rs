@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use tokio::net::TcpStream;
 
 #[derive(Debug, Clone)]
 pub struct Hub {
@@ -195,6 +196,31 @@ impl Hub {
         let resp: UserDataResponse =
             get_request_with_json_response(self.url("api/userdata")).await?;
         Ok(resp.user_data)
+    }
+
+    /// Figure out the local address that is determined
+    /// by the kernel for communication with the hub
+    pub async fn suggest_bind_address(&self) -> anyhow::Result<IpAddr> {
+        let stream = TcpStream::connect((self.addr, 80)).await?;
+        Ok(stream.local_addr()?.ip())
+    }
+
+    pub async fn enable_home_automation_hook(&self, postback_url: &str) -> anyhow::Result<()> {
+        let url = self.url("api/homeautomation");
+
+        let res: serde_json::Value = request_with_json_response(
+            Method::PUT,
+            url,
+            &json!({
+                "homeautomation": {
+                    "enabled": true,
+                    "postBackUrl": postback_url
+                }
+            }),
+        )
+        .await?;
+        println!("res: {res:?}");
+        Ok(())
     }
 }
 

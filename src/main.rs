@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::Parser;
 use tokio::sync::Mutex;
 
@@ -63,6 +64,7 @@ impl Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    simple_logger::init_with_level(log::Level::Info).context("simple_logger::init")?;
     let args = Args::parse();
     args.run().await
 }

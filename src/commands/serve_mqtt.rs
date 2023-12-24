@@ -1,7 +1,13 @@
-use crate::api_types::ShadeUpdateMotion;
+use crate::api_types::{
+    HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService, ShadePosition,
+    ShadeUpdateMotion, UserData,
+};
+use crate::hub::Hub;
 use mosquitto_rs::*;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 const SECONDARY_SUFFIX: &str = "_2";
 
@@ -31,10 +37,19 @@ pub struct ServeMqttCommand {
     discovery_prefix: String,
 }
 
+#[derive(Debug)]
+enum ServerEvent {
+    MqttMessage(Message),
+    HomeAutomationData(Vec<HomeAutomationPostBackData>),
+}
+
 impl ServeMqttCommand {
-    pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
-        let hub = args.hub().await?;
-        let user_data = hub.get_user_data().await?;
+    async fn register_shades(
+        &self,
+        user_data: &UserData,
+        hub: &Hub,
+        client: &mut Client,
+    ) -> anyhow::Result<()> {
         let shades = hub.list_shades(None, None).await?;
         let room_by_id: HashMap<_, _> = hub
             .list_rooms()
@@ -42,39 +57,6 @@ impl ServeMqttCommand {
             .into_iter()
             .map(|room| (room.id, room.name))
             .collect();
-
-        let mut client = Client::with_auto_id()?;
-
-        client.set_username_and_password(self.username.as_deref(), self.password.as_deref())?;
-        client
-            .connect(
-                &self.host,
-                self.port.into(),
-                Duration::from_secs(10),
-                self.bind_address.as_deref(),
-            )
-            .await?;
-        let subscriber = client.subscriber().expect("to own the subscriber");
-
-        client
-            .subscribe(
-                &format!("{}/status", self.discovery_prefix),
-                QoS::AtMostOnce,
-            )
-            .await?;
-        client.subscribe("pv2mqtt/shade/+/state", QoS::AtMostOnce).await?;
-        client
-            .subscribe("pv2mqtt/shade/+/position", QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe("pv2mqtt/shade/+/set_position", QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe("pv2mqtt/shade/+/availability", QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe("pv2mqtt/shade/+/command", QoS::AtMostOnce)
-            .await?;
 
         for shade in &shades {
             if shade.name() != "Study Sheer" {
@@ -101,6 +83,15 @@ impl ServeMqttCommand {
             }
 
             for (shade_id, shade_name, pos) in shades {
+                let area = shade
+                    .room_id
+                    .and_then(|room_id| {
+                        room_by_id
+                            .get(&room_id)
+                            .map(|name| serde_json::json!(name.as_str()))
+                    })
+                    .unwrap_or(serde_json::Value::Null);
+
                 let data = serde_json::json!({
                     "name": serde_json::Value::Null,
                     "device_class": "shade",
@@ -111,7 +102,7 @@ impl ServeMqttCommand {
                     "set_position_topic": format!("pv2mqtt/shade/{shade_id}/set_position"),
                     "command_topic": format!("pv2mqtt/shade/{shade_id}/command"),
                     "device": {
-                        "suggested_area": shade.room_id.and_then(|room_id| room_by_id.get(&room_id).map(|name| serde_json::json!(name.as_str()))).unwrap_or(serde_json::Value::Null),
+                        "suggested_area": area,
                         "identifiers": [
                             unique_id
                         ],
@@ -129,7 +120,7 @@ impl ServeMqttCommand {
                 client
                     .publish(
                         &format!("{}/cover/{shade_id}/config", self.discovery_prefix),
-                        dbg!(serde_json::to_string(&data)?).as_bytes(),
+                        serde_json::to_string(&data)?.as_bytes(),
                         QoS::AtMostOnce,
                         false,
                     )
@@ -146,106 +137,295 @@ impl ServeMqttCommand {
                     )
                     .await?;
 
-                handle_position(&mut client, &shade_id, pos).await?;
+                self.handle_position(client, &shade_id, pos).await?;
+                let state = if pos == 0 { "closed" } else { "open" };
+                self.advise_of_state_label(client, &shade_id, state).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn advise_of_state_label(
+        &self,
+        client: &mut Client,
+        shade_id: &str,
+        state: &str,
+    ) -> anyhow::Result<()> {
+        client
+            .publish(
+                &format!("pv2mqtt/shade/{shade_id}/state"),
+                &state.as_bytes(),
+                QoS::AtMostOnce,
+                false,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_position(
+        &self,
+        client: &mut Client,
+        shade_id: &str,
+        position: u8,
+    ) -> anyhow::Result<()> {
+        client
+            .publish(
+                &format!("pv2mqtt/shade/{shade_id}/position"),
+                &format!("{position}").as_bytes(),
+                QoS::AtMostOnce,
+                false,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn setup_http_server(&self, hub: &Hub, tx: Sender<ServerEvent>) -> anyhow::Result<()> {
+        // Figure out our local ip when talking to the hub
+        let hub_bind_addr = hub.suggest_bind_address().await?;
+
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::response::{IntoResponse, Response};
+        use axum::routing::post;
+        use axum::Router;
+        use base64::engine::Engine;
+
+        fn generic<T: ToString + std::fmt::Display>(err: T) -> Response {
+            log::error!("err: {err:#}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+        }
+
+        /// The hook data is sent with `Content-Type: application/x-www-form-urlencoded`
+        /// but the data is most often actually base64 encoded json, so we just have
+        /// to ignore the content type and extract from the data ourselves.
+        async fn pv_postback(
+            State(tx): State<Sender<ServerEvent>>,
+            body: String,
+        ) -> Result<Response, Response> {
+            #[derive(Deserialize, Debug)]
+            #[serde(rename_all = "camelCase")]
+            #[serde(deny_unknown_fields)]
+            pub struct ConfigUpdate {
+                pub config_num: i64,
             }
 
-            break;
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&body) {
+                let data: Vec<HomeAutomationPostBackData> =
+                    serde_json::from_slice(&decoded).map_err(generic)?;
+                tx.send(ServerEvent::HomeAutomationData(data))
+                    .await
+                    .map_err(generic)?;
+            } else if let Ok(config) = serde_urlencoded::from_str::<ConfigUpdate>(&body) {
+                log::debug!(
+                    "** A shade failed post-move verification. New configuration {config:?}"
+                );
+            } else {
+                log::error!("** Not sure what to do with {body}");
+            }
+            Ok((StatusCode::OK, "").into_response())
         }
 
-        println!("Listening");
+        let app = Router::new()
+            .route("/pv-postback", post(pv_postback))
+            .with_state(tx);
 
-        async fn advise_of_state(
-            client: &mut Client,
-            shade_id: &str,
-            position: u8,
-        ) -> anyhow::Result<()> {
-            let state = if position == 0 { "closed" } else { "open" };
+        let listener = tokio::net::TcpListener::bind((hub_bind_addr, 0)).await?;
+        let addr = listener.local_addr()?;
+        log::info!("http server addr is {addr:?}");
+        hub.enable_home_automation_hook(&format!("{addr}/pv-postback"))
+            .await?;
+        tokio::spawn(async { axum::serve(listener, app).await });
+        Ok(())
+    }
 
-            client
-                .publish(
-                    &format!("pv2mqtt/shade/{shade_id}/state"),
-                    &state.as_bytes(),
-                    QoS::AtMostOnce,
-                    false,
-                )
-                .await?;
-            Ok(())
-        }
+    pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
 
-        async fn handle_position(
-            client: &mut Client,
-            shade_id: &str,
-            position: u8,
-        ) -> anyhow::Result<()> {
-            client
-                .publish(
-                    &format!("pv2mqtt/shade/{shade_id}/position"),
-                    &format!("{position}").as_bytes(),
-                    QoS::AtMostOnce,
-                    false,
-                )
-                .await?;
+        let hub = args.hub().await?;
+        let user_data = hub.get_user_data().await?;
 
-            advise_of_state(client, shade_id, position).await?;
-            Ok(())
-        }
+        self.setup_http_server(&hub, tx.clone()).await?;
 
-        while let Ok(msg) = subscriber.recv().await {
-            println!("msg: {msg:?}");
-            let topic: Vec<_> = msg.topic.split('/').collect();
-            if let [_, device_kind, shade_id, kind] = topic.as_slice() {
-                let (actual_shade_id, is_secondary) =
-                    if let Some(id) = shade_id.strip_suffix(SECONDARY_SUFFIX) {
-                        (id.parse::<i32>()?, true)
+        let mut client = Client::with_auto_id()?;
+
+        client.set_username_and_password(self.username.as_deref(), self.password.as_deref())?;
+        client
+            .connect(
+                &self.host,
+                self.port.into(),
+                Duration::from_secs(10),
+                self.bind_address.as_deref(),
+            )
+            .await?;
+        let subscriber = client.subscriber().expect("to own the subscriber");
+
+        client
+            .subscribe(
+                &format!("{}/status", self.discovery_prefix),
+                QoS::AtMostOnce,
+            )
+            .await?;
+        client
+            .subscribe("pv2mqtt/shade/+/state", QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe("pv2mqtt/shade/+/position", QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe("pv2mqtt/shade/+/set_position", QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe("pv2mqtt/shade/+/availability", QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe("pv2mqtt/shade/+/command", QoS::AtMostOnce)
+            .await?;
+
+        self.register_shades(&user_data, &hub, &mut client).await?;
+
+        tokio::spawn(async move {
+            while let Ok(msg) = subscriber.recv().await {
+                if let Err(err) = tx.send(ServerEvent::MqttMessage(msg)).await {
+                    log::error!("{err:#?}");
+                    break;
+                }
+            }
+        });
+
+        self.serve(hub, client, rx).await
+    }
+
+    async fn handle_mqtt_message(&self, msg: Message, hub: &Hub) -> anyhow::Result<()> {
+        log::debug!("msg: {msg:?}");
+        let topic: Vec<_> = msg.topic.split('/').collect();
+        if let [_, _device_kind, shade_id, kind] = topic.as_slice() {
+            let (actual_shade_id, is_secondary) =
+                if let Some(id) = shade_id.strip_suffix(SECONDARY_SUFFIX) {
+                    (id.parse::<i32>()?, true)
+                } else {
+                    (shade_id.parse::<i32>()?, false)
+                };
+
+            let shade = hub.shade_by_id(actual_shade_id).await?;
+
+            let payload = String::from_utf8_lossy(&msg.payload);
+            log::debug!("{kind} Cover: {shade_id} 2nd={is_secondary}, payload={payload}");
+            match kind.as_ref() {
+                "set_position" => {
+                    let position: u8 = payload.parse()?;
+
+                    let mut shade_pos = shade.positions.clone().ok_or_else(|| {
+                        anyhow::anyhow!("shade {actual_shade_id} has no existing position")
+                    })?;
+
+                    let absolute = ShadePosition::percent_to_pos(position);
+
+                    if is_secondary {
+                        shade_pos.position_2.replace(absolute);
                     } else {
-                        (shade_id.parse::<i32>()?, false)
-                    };
-
-                let shade = hub.shade_by_id(actual_shade_id).await?;
-
-                let payload = String::from_utf8_lossy(&msg.payload);
-                println!("{kind} Cover: {shade_id} 2nd={is_secondary}, payload={payload}");
-                match kind.as_ref() {
-                    "set_position" => {
-                        let position: u8 = payload.parse()?;
-
-                        let mut shade_pos = shade.positions.clone().ok_or_else(|| {
-                            anyhow::anyhow!("shade {actual_shade_id} has no existing position")
-                        })?;
-
-                        let absolute =
-                            ((u16::max_value() as u32) * (position as u32) / 100u32) as u16;
-
-                        if is_secondary {
-                            shade_pos.position_2.replace(absolute);
-                        } else {
-                            shade_pos.position_1 = absolute;
-                        }
-
-                        hub.change_shade_position(actual_shade_id, shade_pos.clone())
-                            .await?;
-
-                        handle_position(&mut client, shade_id, position).await?;
+                        shade_pos.position_1 = absolute;
                     }
-                    "command" => match payload.as_ref() {
-                        "OPEN" => {
-                            hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
-                                .await?;
-                            handle_position(&mut client, shade_id, 100).await?;
-                        }
-                        "CLOSE" => {
-                            hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
-                                .await?;
-                            handle_position(&mut client, shade_id, 0).await?;
-                        }
-                        "STOP" => {
-                            hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
-                                .await?;
-                            // TODO: report current position?
-                        }
-                        _ => {}
-                    },
+
+                    hub.change_shade_position(actual_shade_id, shade_pos.clone())
+                        .await?;
+                }
+                "command" => match payload.as_ref() {
+                    "OPEN" => {
+                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
+                            .await?;
+                    }
+                    "CLOSE" => {
+                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
+                            .await?;
+                    }
+                    "STOP" => {
+                        hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
+                            .await?;
+                    }
                     _ => {}
+                },
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_pv_event(
+        &self,
+        item: HomeAutomationPostBackData,
+        client: &mut Client,
+    ) -> anyhow::Result<()> {
+        log::debug!("item: {item:#?}");
+
+        let shade_id = match item.service {
+            HomeAutomationService::Primary => item.shade_id.to_string(),
+            HomeAutomationService::Secondary => {
+                format!("{}{SECONDARY_SUFFIX}", item.shade_id)
+            }
+        };
+
+        match item.record_type {
+            HomeAutomationRecordType::Stops => {
+                if let Some(pct) = item.stopped_position {
+                    self.handle_position(client, &shade_id, pct).await?;
+
+                    let state = if pct == 0 { "closed" } else { "open" };
+                    self.advise_of_state_label(client, &shade_id, state).await?;
+                }
+            }
+            HomeAutomationRecordType::BeginsMoving => {
+                if let Some(pct) = item.current_position {
+                    self.handle_position(client, &shade_id, pct).await?;
+                }
+            }
+            HomeAutomationRecordType::StartsClosing => {
+                self.advise_of_state_label(client, &shade_id, "closing")
+                    .await?;
+            }
+            HomeAutomationRecordType::StartsOpening => {
+                self.advise_of_state_label(client, &shade_id, "opening")
+                    .await?;
+            }
+            HomeAutomationRecordType::HasOpened | HomeAutomationRecordType::HasFullyOpened => {
+                self.advise_of_state_label(client, &shade_id, "open")
+                    .await?;
+            }
+            HomeAutomationRecordType::HasClosed | HomeAutomationRecordType::HasFullyClosed => {
+                self.advise_of_state_label(client, &shade_id, "closed")
+                    .await?;
+            }
+            HomeAutomationRecordType::TargetLevelChanged => {}
+            HomeAutomationRecordType::LevelChanged => {}
+        }
+        Ok(())
+    }
+
+    async fn serve(
+        &self,
+        hub: Hub,
+        mut client: Client,
+        mut rx: Receiver<ServerEvent>,
+    ) -> anyhow::Result<()> {
+        log::info!("Waiting for mqtt and pv messages");
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                ServerEvent::MqttMessage(msg) => {
+                    if let Err(err) = self.handle_mqtt_message(msg, &hub).await {
+                        log::error!("handling mqtt message: {err:#}");
+                    }
+                }
+                ServerEvent::HomeAutomationData(mut data) => {
+                    // Re-order the events so that the closed/open events happen
+                    // after closing/opening
+                    data.sort_by(|a, b| a.record_type.cmp(&b.record_type));
+
+                    for item in data {
+                        if let Err(err) = self.handle_pv_event(item, &mut client).await {
+                            log::error!("handling pv event: {err:#}");
+                        }
+                    }
                 }
             }
         }
