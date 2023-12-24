@@ -43,12 +43,56 @@ enum ServerEvent {
     HomeAutomationData(Vec<HomeAutomationPostBackData>),
 }
 
+struct MqttMsg {
+    pub topic: String,
+    pub payload: Vec<u8>,
+}
+
+impl MqttMsg {
+    pub fn new<T: Into<String>, P: Into<Vec<u8>>>(topic: T, payload: P) -> Self {
+        Self {
+            topic: topic.into(),
+            payload: payload.into(),
+        }
+    }
+}
+
+struct HassRegistration<'a> {
+    pub client: &'a mut Client,
+    pub updates: Vec<MqttMsg>,
+}
+
+impl<'a> HassRegistration<'a> {
+    pub async fn config<T: AsRef<str>, P: AsRef<[u8]>>(
+        &mut self,
+        topic: T,
+        payload: P,
+    ) -> anyhow::Result<()> {
+        self.client
+            .publish(topic.as_ref(), payload.as_ref(), QoS::AtMostOnce, false)
+            .await?;
+        Ok(())
+    }
+
+    pub fn update<T: Into<String>, P: Into<Vec<u8>>>(&mut self, topic: T, payload: P) {
+        self.updates.push(MqttMsg::new(topic, payload));
+    }
+
+    pub async fn apply_updates(&mut self) -> anyhow::Result<()> {
+        for msg in &self.updates {
+            self.client
+                .publish(&msg.topic, &msg.payload, QoS::AtMostOnce, false)
+                .await?;
+        }
+        Ok(())
+    }
+}
+
 impl ServeMqttCommand {
     async fn register_hub(
         &self,
         user_data: &UserData,
-        hub: &Hub,
-        client: &mut Client,
+        reg: &mut HassRegistration<'_>,
     ) -> anyhow::Result<()> {
         let serial = &user_data.serial_number;
         let data = serde_json::json!({
@@ -77,35 +121,21 @@ impl ServeMqttCommand {
             },
         });
 
-        // Tell hass about it
-        client
-            .publish(
-                &format!("{}/sensor/{serial}-hub-ip/config", self.discovery_prefix),
-                serde_json::to_string(&data)?.as_bytes(),
-                QoS::AtMostOnce,
-                false,
-            )
-            .await?;
+        reg.config(
+            format!("{}/sensor/{serial}-hub-ip/config", self.discovery_prefix),
+            serde_json::to_string(&data)?,
+        )
+        .await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        reg.update(
+            format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
+            "online",
+        );
 
-        client
-            .publish(
-                &format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
-                b"online",
-                QoS::AtMostOnce,
-                false,
-            )
-            .await?;
-
-        client
-            .publish(
-                &format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
-                user_data.ip.as_bytes(),
-                QoS::AtMostOnce,
-                false,
-            )
-            .await?;
+        reg.update(
+            format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
+            user_data.ip.clone(),
+        );
 
         Ok(())
     }
@@ -114,7 +144,7 @@ impl ServeMqttCommand {
         &self,
         user_data: &UserData,
         hub: &Hub,
-        client: &mut Client,
+        reg: &mut HassRegistration<'_>,
     ) -> anyhow::Result<()> {
         let shades = hub.list_shades(None, None).await?;
         let room_by_id: HashMap<_, _> = hub
@@ -189,29 +219,20 @@ impl ServeMqttCommand {
                 });
 
                 // Tell hass about this shade
-                client
-                    .publish(
-                        &format!("{}/cover/{shade_id}/config", self.discovery_prefix),
-                        serde_json::to_string(&data)?.as_bytes(),
-                        QoS::AtMostOnce,
-                        false,
-                    )
-                    .await?;
+                reg.config(
+                    format!("{}/cover/{shade_id}/config", self.discovery_prefix),
+                    serde_json::to_string(&data)?,
+                )
+                .await?;
 
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                reg.update(format!("pv2mqtt/shade/{shade_id}/availability"), "online");
 
-                client
-                    .publish(
-                        &format!("pv2mqtt/shade/{shade_id}/availability"),
-                        b"online",
-                        QoS::AtMostOnce,
-                        false,
-                    )
-                    .await?;
-
-                self.handle_position(client, &shade_id, pos).await?;
+                reg.update(
+                    format!("pv2mqtt/shade/{shade_id}/position"),
+                    format!("{pos}"),
+                );
                 let state = if pos == 0 { "closed" } else { "open" };
-                self.advise_of_state_label(client, &shade_id, state).await?;
+                reg.update(format!("pv2mqtt/shade/{shade_id}/state"), state);
             }
         }
 
@@ -314,8 +335,18 @@ impl ServeMqttCommand {
 
     async fn register_with_hass(&self, hub: &Hub, client: &mut Client) -> anyhow::Result<()> {
         let user_data = hub.get_user_data().await?;
-        self.register_hub(&user_data, &hub, client).await?;
-        self.register_shades(&user_data, &hub, client).await?;
+        let mut reg = HassRegistration {
+            client,
+            updates: vec![],
+        };
+
+        self.register_hub(&user_data, &mut reg).await?;
+        self.register_shades(&user_data, &hub, &mut reg).await?;
+        // Give home assistant some time to process the configuration
+        // messages before attempting to notify of availability and
+        // other updates
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        reg.apply_updates().await?;
         Ok(())
     }
 
