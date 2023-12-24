@@ -44,6 +44,72 @@ enum ServerEvent {
 }
 
 impl ServeMqttCommand {
+    async fn register_hub(
+        &self,
+        user_data: &UserData,
+        hub: &Hub,
+        client: &mut Client,
+    ) -> anyhow::Result<()> {
+        let serial = &user_data.serial_number;
+        let data = serde_json::json!({
+            "name": "IP Address",
+            "unique_id": format!("{serial}-hub-ip"),
+            "state_topic": format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
+            "availability_topic": format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
+            "device": {
+                "identifiers": [
+                    format!("pv2mqtt-{serial}"),
+                    user_data.serial_number,
+                    user_data.mac_address,
+                ],
+                "connections": [
+                    ["mac", user_data.mac_address],
+                ],
+                "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
+                "manufacturer": "Wez Furlong",
+                "model": "pv2mqtt",
+            },
+            "entity_category": "diagnostic",
+            "origin": {
+                "name": "pv2mqtt",
+                "sw": "0.0",
+                "url": "https://github.com/wez/pview",
+            },
+        });
+
+        // Tell hass about it
+        client
+            .publish(
+                &format!("{}/sensor/{serial}-hub-ip/config", self.discovery_prefix),
+                serde_json::to_string(&data)?.as_bytes(),
+                QoS::AtMostOnce,
+                false,
+            )
+            .await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        client
+            .publish(
+                &format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
+                b"online",
+                QoS::AtMostOnce,
+                false,
+            )
+            .await?;
+
+        client
+            .publish(
+                &format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
+                user_data.ip.as_bytes(),
+                QoS::AtMostOnce,
+                false,
+            )
+            .await?;
+
+        Ok(())
+    }
+
     async fn register_shades(
         &self,
         user_data: &UserData,
@@ -106,12 +172,18 @@ impl ServeMqttCommand {
                         "identifiers": [
                             unique_id
                         ],
+                        "via_device": format!("pv2mqtt-{}", user_data.serial_number),
                         "name": shade_name,
                         "manufacturer": "Hunter Douglas",
                         "model": "pv2mqtt",
                         "sw_version": shade.firmware.as_ref().map(|vers| {
                             format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)
                         }).unwrap_or_else(|| "unknown".to_string()),
+                    },
+                    "origin": {
+                        "name": "pv2mqtt",
+                        "sw": "0.0",
+                        "url": "https://github.com/wez/pview",
                     },
                     "platform": "mqtt",
                 });
@@ -240,11 +312,17 @@ impl ServeMqttCommand {
         Ok(())
     }
 
+    async fn register_with_hass(&self, hub: &Hub, client: &mut Client) -> anyhow::Result<()> {
+        let user_data = hub.get_user_data().await?;
+        self.register_hub(&user_data, &hub, client).await?;
+        self.register_shades(&user_data, &hub, client).await?;
+        Ok(())
+    }
+
     pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
         let hub = args.hub().await?;
-        let user_data = hub.get_user_data().await?;
 
         self.setup_http_server(&hub, tx.clone()).await?;
 
@@ -283,7 +361,7 @@ impl ServeMqttCommand {
             .subscribe("pv2mqtt/shade/+/command", QoS::AtMostOnce)
             .await?;
 
-        self.register_shades(&user_data, &hub, &mut client).await?;
+        self.register_with_hass(&hub, &mut client).await?;
 
         tokio::spawn(async move {
             while let Ok(msg) = subscriber.recv().await {
@@ -297,8 +375,18 @@ impl ServeMqttCommand {
         self.serve(hub, client, rx).await
     }
 
-    async fn handle_mqtt_message(&self, msg: Message, hub: &Hub) -> anyhow::Result<()> {
+    async fn handle_mqtt_message(
+        &self,
+        msg: Message,
+        hub: &Hub,
+        client: &mut Client,
+    ) -> anyhow::Result<()> {
         log::debug!("msg: {msg:?}");
+
+        if msg.topic == format!("{}/status", self.discovery_prefix) {
+            return self.register_with_hass(hub, client).await;
+        }
+
         let topic: Vec<_> = msg.topic.split('/').collect();
         if let [_, _device_kind, shade_id, kind] = topic.as_slice() {
             let (actual_shade_id, is_secondary) =
@@ -412,7 +500,7 @@ impl ServeMqttCommand {
         while let Some(msg) = rx.recv().await {
             match msg {
                 ServerEvent::MqttMessage(msg) => {
-                    if let Err(err) = self.handle_mqtt_message(msg, &hub).await {
+                    if let Err(err) = self.handle_mqtt_message(msg, &hub, &mut client).await {
                         log::error!("handling mqtt message: {err:#}");
                     }
                 }
