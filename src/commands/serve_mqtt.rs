@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 const SECONDARY_SUFFIX: &str = "_2";
+const MODEL: &str = "pv2mqtt";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
 
@@ -41,6 +42,7 @@ pub struct ServeMqttCommand {
 enum ServerEvent {
     MqttMessage(Message),
     HomeAutomationData(Vec<HomeAutomationPostBackData>),
+    PeriodicDisco,
 }
 
 struct MqttMsg {
@@ -98,11 +100,11 @@ impl ServeMqttCommand {
         let data = serde_json::json!({
             "name": "IP Address",
             "unique_id": format!("{serial}-hub-ip"),
-            "state_topic": format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
-            "availability_topic": format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
+            "state_topic": format!("{MODEL}/sensor/{serial}-hub-ip/state"),
+            "availability_topic": format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
             "device": {
                 "identifiers": [
-                    format!("pv2mqtt-{serial}"),
+                    format!("{MODEL}-{serial}"),
                     user_data.serial_number,
                     user_data.mac_address,
                 ],
@@ -111,11 +113,11 @@ impl ServeMqttCommand {
                 ],
                 "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
                 "manufacturer": "Wez Furlong",
-                "model": "pv2mqtt",
+                "model": MODEL,
             },
             "entity_category": "diagnostic",
             "origin": {
-                "name": "pv2mqtt",
+                "name": MODEL,
                 "sw": "0.0",
                 "url": "https://github.com/wez/pview",
             },
@@ -128,12 +130,12 @@ impl ServeMqttCommand {
         .await?;
 
         reg.update(
-            format!("pv2mqtt/sensor/{serial}-hub-ip/availability"),
+            format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
             "online",
         );
 
         reg.update(
-            format!("pv2mqtt/sensor/{serial}-hub-ip/state"),
+            format!("{MODEL}/sensor/{serial}-hub-ip/state"),
             user_data.ip.clone(),
         );
 
@@ -172,18 +174,18 @@ impl ServeMqttCommand {
             let data = serde_json::json!({
                 "name": serde_json::Value::Null,
                 "unique_id": unique_id,
-                "availability_topic": format!("pv2mqtt/scene/{scene_id}/availability"),
-                "command_topic": format!("pv2mqtt/scene/{scene_id}/set"),
+                "availability_topic": format!("{MODEL}/scene/{scene_id}/availability"),
+                "command_topic": format!("{MODEL}/scene/{scene_id}/set"),
                 "payload_on": "ON",
                 "device": {
                     "suggested_area": area,
                     "identifiers": [
                         unique_id,
                     ],
-                    "via_device": format!("pv2mqtt-{}", user_data.serial_number),
+                    "via_device": format!("{MODEL}-{}", user_data.serial_number),
                     "name": scene_name,
                     "manufacturer": "Wez Furlong",
-                    "model": "pv2mqtt",
+                    "model": MODEL,
                 },
             });
 
@@ -194,7 +196,7 @@ impl ServeMqttCommand {
             )
             .await?;
 
-            reg.update(format!("pv2mqtt/scene/{scene_id}/availability"), "online");
+            reg.update(format!("{MODEL}/scene/{scene_id}/availability"), "online");
         }
 
         Ok(())
@@ -252,30 +254,29 @@ impl ServeMqttCommand {
                     "name": serde_json::Value::Null,
                     "device_class": "shade",
                     "unique_id": unique_id,
-                    "state_topic": format!("pv2mqtt/shade/{shade_id}/state"),
-                    "position_topic": format!("pv2mqtt/shade/{shade_id}/position"),
-                    "availability_topic": format!("pv2mqtt/shade/{shade_id}/availability"),
-                    "set_position_topic": format!("pv2mqtt/shade/{shade_id}/set_position"),
-                    "command_topic": format!("pv2mqtt/shade/{shade_id}/command"),
+                    "state_topic": format!("{MODEL}/shade/{shade_id}/state"),
+                    "position_topic": format!("{MODEL}/shade/{shade_id}/position"),
+                    "availability_topic": format!("{MODEL}/shade/{shade_id}/availability"),
+                    "set_position_topic": format!("{MODEL}/shade/{shade_id}/set_position"),
+                    "command_topic": format!("{MODEL}/shade/{shade_id}/command"),
                     "device": {
                         "suggested_area": area,
                         "identifiers": [
                             unique_id
                         ],
-                        "via_device": format!("pv2mqtt-{}", user_data.serial_number),
+                        "via_device": format!("{MODEL}-{}", user_data.serial_number),
                         "name": shade_name,
                         "manufacturer": "Hunter Douglas",
-                        "model": "pv2mqtt",
+                        "model": MODEL,
                         "sw_version": shade.firmware.as_ref().map(|vers| {
                             format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)
                         }).unwrap_or_else(|| "unknown".to_string()),
                     },
                     "origin": {
-                        "name": "pv2mqtt",
+                        "name": MODEL,
                         "sw": "0.0",
                         "url": "https://github.com/wez/pview",
                     },
-                    "platform": "mqtt",
                 });
 
                 // Tell hass about this shade
@@ -285,14 +286,14 @@ impl ServeMqttCommand {
                 )
                 .await?;
 
-                reg.update(format!("pv2mqtt/shade/{shade_id}/availability"), "online");
+                reg.update(format!("{MODEL}/shade/{shade_id}/availability"), "online");
 
                 reg.update(
-                    format!("pv2mqtt/shade/{shade_id}/position"),
+                    format!("{MODEL}/shade/{shade_id}/position"),
                     format!("{pos}"),
                 );
                 let state = if pos == 0 { "closed" } else { "open" };
-                reg.update(format!("pv2mqtt/shade/{shade_id}/state"), state);
+                reg.update(format!("{MODEL}/shade/{shade_id}/state"), state);
             }
         }
 
@@ -307,7 +308,7 @@ impl ServeMqttCommand {
     ) -> anyhow::Result<()> {
         client
             .publish(
-                &format!("pv2mqtt/shade/{shade_id}/state"),
+                &format!("{MODEL}/shade/{shade_id}/state"),
                 &state.as_bytes(),
                 QoS::AtMostOnce,
                 false,
@@ -324,7 +325,7 @@ impl ServeMqttCommand {
     ) -> anyhow::Result<()> {
         client
             .publish(
-                &format!("pv2mqtt/shade/{shade_id}/position"),
+                &format!("{MODEL}/shade/{shade_id}/position"),
                 &format!("{position}").as_bytes(),
                 QoS::AtMostOnce,
                 false,
@@ -438,25 +439,38 @@ impl ServeMqttCommand {
             )
             .await?;
         client
-            .subscribe("pv2mqtt/shade/+/state", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/shade/+/state"), QoS::AtMostOnce)
             .await?;
         client
-            .subscribe("pv2mqtt/shade/+/position", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/shade/+/position"), QoS::AtMostOnce)
             .await?;
         client
-            .subscribe("pv2mqtt/shade/+/set_position", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/shade/+/set_position"), QoS::AtMostOnce)
             .await?;
         client
-            .subscribe("pv2mqtt/shade/+/availability", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/shade/+/availability"), QoS::AtMostOnce)
             .await?;
         client
-            .subscribe("pv2mqtt/shade/+/command", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/shade/+/command"), QoS::AtMostOnce)
             .await?;
         client
-            .subscribe("pv2mqtt/scene/+/set", QoS::AtMostOnce)
+            .subscribe(&format!("{MODEL}/scene/+/set"), QoS::AtMostOnce)
             .await?;
 
         self.register_with_hass(&hub, &mut client).await?;
+
+        {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    if let Err(err) = tx.send(ServerEvent::PeriodicDisco).await {
+                        log::error!("{err:#?}");
+                        break;
+                    }
+                }
+            });
+        }
 
         tokio::spawn(async move {
             while let Ok(msg) = subscriber.recv().await {
@@ -601,7 +615,7 @@ impl ServeMqttCommand {
 
     async fn serve(
         &self,
-        hub: Hub,
+        mut hub: Hub,
         mut client: Client,
         mut rx: Receiver<ServerEvent>,
     ) -> anyhow::Result<()> {
@@ -624,6 +638,15 @@ impl ServeMqttCommand {
                         }
                     }
                 }
+                ServerEvent::PeriodicDisco => match Hub::discover().await {
+                    Ok(new_hub) => {
+                        hub = new_hub;
+                        self.register_with_hass(&hub, &mut client).await?;
+                    }
+                    Err(err) => {
+                        log::error!("While running discovery: {err:#?}");
+                    }
+                },
             }
         }
 
