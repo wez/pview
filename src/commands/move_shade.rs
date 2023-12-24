@@ -9,6 +9,7 @@ struct TargetPosition {
     percent: Option<u8>,
 }
 
+/// Move or set the position of a shade
 #[derive(clap::Parser, Debug)]
 pub struct MoveShadeCommand {
     /// The name or id of the shade to open.

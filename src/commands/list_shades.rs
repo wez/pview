@@ -2,6 +2,7 @@ use crate::api_types::ShadeCapabilityFlags;
 use std::collections::BTreeMap;
 use tabout::{Alignment, Column};
 
+/// List shades and their current positions
 #[derive(clap::Parser, Debug)]
 pub struct ListShadesCommand {
     /// Only return shades in the specified room

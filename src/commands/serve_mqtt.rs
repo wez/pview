@@ -16,6 +16,7 @@ const MODEL: &str = "pv2mqtt";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
 
+/// Launch the pv2mqtt bridge, adding your hub to Home Assistant
 #[derive(clap::Parser, Debug)]
 pub struct ServeMqttCommand {
     /// The mqtt broker hostname or address.

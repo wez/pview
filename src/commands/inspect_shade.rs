@@ -1,3 +1,4 @@
+/// Show diagnostic information about a shade
 #[derive(clap::Parser, Debug)]
 pub struct InspectShadeCommand {
     /// The name or id of the shade to inspect.

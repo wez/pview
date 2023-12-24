@@ -1,3 +1,4 @@
+/// Activate a scene
 #[derive(clap::Parser, Debug)]
 pub struct ActivateSceneCommand {
     /// The name or id of the shade to inspect.

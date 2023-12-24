@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use tabout::{Alignment, Column};
 
+/// List scenes and their associated shades
 #[derive(clap::Parser, Debug)]
 pub struct ListScenesCommand {
     /// Only return shades in the specified room

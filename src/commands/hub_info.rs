@@ -1,3 +1,4 @@
+/// Show diagnostic information for the hub
 #[derive(clap::Parser, Debug)]
 pub struct HubInfoCommand {}
 impl HubInfoCommand {
