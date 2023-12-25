@@ -542,7 +542,8 @@ impl ServeMqttCommand {
             }
         });
 
-        self.serve(hub, client, rx, http_port).await
+        self.serve(hub, client, rx, http_port).await;
+        Ok(())
     }
 
     async fn handle_mqtt_message(
@@ -681,13 +682,26 @@ impl ServeMqttCommand {
         Ok(())
     }
 
+    async fn re_run_discovery(
+        &self,
+        hub: &mut Hub,
+        client: &mut Client,
+        http_port: u16,
+    ) -> anyhow::Result<()> {
+        let new_hub = Hub::discover().await?;
+        *hub = new_hub;
+        self.update_homeautomation_hook(hub, http_port).await?;
+        self.register_with_hass(hub, client).await?;
+        Ok(())
+    }
+
     async fn serve(
         &self,
         mut hub: Hub,
         mut client: Client,
         mut rx: Receiver<ServerEvent>,
         http_port: u16,
-    ) -> anyhow::Result<()> {
+    ) {
         log::info!("Waiting for mqtt and pv messages");
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -707,19 +721,15 @@ impl ServeMqttCommand {
                         }
                     }
                 }
-                ServerEvent::PeriodicDisco => match Hub::discover().await {
-                    Ok(new_hub) => {
-                        hub = new_hub;
-                        self.update_homeautomation_hook(&hub, http_port).await?;
-                        self.register_with_hass(&hub, &mut client).await?;
-                    }
-                    Err(err) => {
+                ServerEvent::PeriodicDisco => {
+                    if let Err(err) = self
+                        .re_run_discovery(&mut hub, &mut client, http_port)
+                        .await
+                    {
                         log::error!("While running discovery: {err:#?}");
                     }
-                },
+                }
             }
         }
-
-        Ok(())
     }
 }
