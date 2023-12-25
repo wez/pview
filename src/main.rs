@@ -63,6 +63,7 @@ impl Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    color_backtrace::install();
     if let Ok(path) = dotenvy::dotenv() {
         eprintln!("Loading environment overrides from {path:?}");
     }
