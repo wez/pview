@@ -2110,9 +2110,9 @@ dependencies = [
 
 [[package]]
 name = "wez-mdns"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e61ad965a1ce92a776ad2170176d50d1a6c06aeb6ef1d8ab3ce969258b37ad92"
+checksum = "e3822a1e84db654ef258e8f74fa2b710ee9823db630f16627071a1c576f7dc6c"
 dependencies = [
  "byteorder",
  "if-addrs",

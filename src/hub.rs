@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::time::Duration;
 use tokio::net::TcpStream;
 
 #[derive(Debug, Clone)]
@@ -78,12 +79,12 @@ impl Hub {
         Self { addr }
     }
 
-    pub async fn discover() -> anyhow::Result<Self> {
-        let addr = resolve_hub().await.context(
+    pub async fn discover(timeout: Duration) -> anyhow::Result<Self> {
+        let addr = resolve_hub(timeout).await.context(
             "Failed to discover the PowerView Hub. \
              Ensure that pview is running on the same network as the Hub!",
         )?;
-        Ok(Hub { addr })
+        Ok(Self::with_addr(addr))
     }
 
     pub async fn room_by_name(&self, name: &str) -> anyhow::Result<RoomData> {

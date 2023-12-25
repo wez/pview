@@ -2,12 +2,13 @@ use crate::api_types::{
     HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService,
     ShadeCapabilityFlags, ShadePosition, ShadeUpdateMotion, UserData,
 };
+use crate::discovery::ResolvedHub;
 use crate::hub::Hub;
+use crate::opt_env_var;
 use anyhow::Context;
 use mosquitto_rs::*;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -46,26 +47,12 @@ pub struct ServeMqttCommand {
     discovery_prefix: String,
 }
 
-fn opt_env_var<T: FromStr>(name: &str) -> anyhow::Result<Option<T>>
-where
-    <T as FromStr>::Err: std::fmt::Display,
-{
-    match std::env::var(name) {
-        Ok(p) => {
-            Ok(Some(p.parse().map_err(|err| {
-                anyhow::anyhow!("parsing ${{name}}: {err:#}")
-            })?))
-        }
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(_) => anyhow::bail!("PV_MQTT_PORT is invalid"),
-    }
-}
-
 #[derive(Debug)]
 enum ServerEvent {
     MqttMessage(Message),
     HomeAutomationData(Vec<HomeAutomationPostBackData>),
-    PeriodicDisco,
+    PeriodicStateUpdate,
+    HubDiscovered(ResolvedHub),
 }
 
 #[derive(Debug)]
@@ -475,6 +462,7 @@ impl ServeMqttCommand {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
         let hub = args.hub().await?;
+        let hub = ResolvedHub::with_hub(hub).await;
 
         let http_port = self.setup_http_server(tx.clone()).await?;
         self.update_homeautomation_hook(&hub, http_port).await?;
@@ -525,11 +513,35 @@ impl ServeMqttCommand {
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
-                    if let Err(err) = tx.send(ServerEvent::PeriodicDisco).await {
+                    if let Err(err) = tx.send(ServerEvent::PeriodicStateUpdate).await {
                         log::error!("{err:#?}");
                         break;
                     }
                 }
+            });
+        }
+
+        if !args.hub_ip_was_specified_by_user() {
+            let tx = tx.clone();
+            let serial = args.hub_serial()?;
+            let mut disco = crate::discovery::resolve_hubs(None).await?;
+            tokio::spawn(async move {
+                while let Some(resolved_hub) = disco.recv().await {
+                    log::trace!("disco resolved: {resolved_hub:?}");
+                    if let Some(user_data) = &resolved_hub.user_data {
+                        if let Some(serial) = &serial {
+                            if *serial != user_data.serial_number {
+                                continue;
+                            }
+                        }
+
+                        if let Err(err) = tx.send(ServerEvent::HubDiscovered(resolved_hub)).await {
+                            log::error!("discovery: send to main thread: {err:#}");
+                            break;
+                        }
+                    }
+                }
+                log::warn!("fell out of disco loop");
             });
         }
 
@@ -682,13 +694,24 @@ impl ServeMqttCommand {
         Ok(())
     }
 
-    async fn re_run_discovery(
+    async fn handle_discovery(
         &self,
-        hub: &mut Hub,
+        new_hub: ResolvedHub,
+        hub: &mut ResolvedHub,
         client: &mut Client,
         http_port: u16,
     ) -> anyhow::Result<()> {
-        let new_hub = Hub::discover().await?;
+        let changed = match (&new_hub.user_data, &hub.user_data) {
+            (Some(n), Some(e)) => n.ip != e.ip || n.hub_name != e.hub_name,
+            (None, Some(_)) | (Some(_), None) => true,
+            (None, None) => false,
+        };
+
+        if !changed {
+            return Ok(());
+        }
+        log::info!("Hub ip and/or name changed");
+
         *hub = new_hub;
         self.update_homeautomation_hook(hub, http_port).await?;
         self.register_with_hass(hub, client).await?;
@@ -697,7 +720,7 @@ impl ServeMqttCommand {
 
     async fn serve(
         &self,
-        mut hub: Hub,
+        mut hub: ResolvedHub,
         mut client: Client,
         mut rx: Receiver<ServerEvent>,
         http_port: u16,
@@ -721,12 +744,19 @@ impl ServeMqttCommand {
                         }
                     }
                 }
-                ServerEvent::PeriodicDisco => {
+
+                ServerEvent::HubDiscovered(resolved_hub) => {
                     if let Err(err) = self
-                        .re_run_discovery(&mut hub, &mut client, http_port)
+                        .handle_discovery(resolved_hub, &mut hub, &mut client, http_port)
                         .await
                     {
-                        log::error!("While running discovery: {err:#?}");
+                        log::error!("While updating hass state: {err:#?}");
+                    }
+                }
+
+                ServerEvent::PeriodicStateUpdate => {
+                    if let Err(err) = self.register_with_hass(&mut hub, &mut client).await {
+                        log::error!("While updating hass state: {err:#?}");
                     }
                 }
             }

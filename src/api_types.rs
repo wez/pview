@@ -412,7 +412,7 @@ pub struct UserDataResponse {
     pub user_data: UserData,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct UserData {
@@ -454,7 +454,7 @@ pub struct UserData {
     pub remote_connect_enabled: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct FirmwareInfo {
@@ -462,7 +462,7 @@ pub struct FirmwareInfo {
     pub radio: MainProcessorFirmware,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct MainProcessorFirmware {
@@ -472,7 +472,7 @@ pub struct MainProcessorFirmware {
     pub build: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct Color {
@@ -482,7 +482,7 @@ pub struct Color {
     pub brightness: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct TimeConfiguration {
