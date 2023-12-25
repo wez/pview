@@ -6,6 +6,7 @@ use crate::discovery::ResolvedHub;
 use crate::hub::Hub;
 use crate::opt_env_var;
 use anyhow::Context;
+use axum::extract::Path;
 use mosquitto_rs::*;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -50,14 +51,17 @@ pub struct ServeMqttCommand {
 #[derive(Debug)]
 enum ServerEvent {
     MqttMessage(Message),
-    HomeAutomationData(Vec<HomeAutomationPostBackData>),
+    HomeAutomationData {
+        serial: String,
+        data: Vec<HomeAutomationPostBackData>,
+    },
     PeriodicStateUpdate,
     HubDiscovered(ResolvedHub),
 }
 
 #[derive(Debug)]
 enum RegEntry {
-    Delay,
+    Delay(Duration),
     Msg { topic: String, payload: String },
 }
 
@@ -71,6 +75,7 @@ impl RegEntry {
 }
 
 struct HassRegistration {
+    deletes: Vec<RegEntry>,
     configs: Vec<RegEntry>,
     updates: Vec<RegEntry>,
 }
@@ -78,14 +83,23 @@ struct HassRegistration {
 impl HassRegistration {
     pub fn new() -> Self {
         Self {
+            deletes: vec![],
             configs: vec![],
             updates: vec![
                 // Delay between registering configs and advising hass
                 // of the states, so that hass has had enough time
                 // to subscribe to the correct topics
-                RegEntry::Delay,
+                RegEntry::Delay(Duration::from_millis(500)),
             ],
         }
+    }
+
+    pub fn delete<T: Into<String>>(&mut self, topic: T) {
+        if self.deletes.is_empty() {
+            self.deletes
+                .push(RegEntry::Delay(Duration::from_millis(500)));
+        }
+        self.deletes.push(RegEntry::msg(topic, ""));
     }
 
     pub fn config<T: Into<String>, P: Into<String>>(&mut self, topic: T, payload: P) {
@@ -97,11 +111,11 @@ impl HassRegistration {
     }
 
     pub async fn apply_updates(self, client: &mut Client) -> anyhow::Result<()> {
-        for queue in [self.configs, self.updates] {
+        for queue in [self.deletes, self.configs, self.updates] {
             for entry in queue {
                 match entry {
-                    RegEntry::Delay => {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    RegEntry::Delay(duration) => {
+                        tokio::time::sleep(duration).await;
                     }
                     RegEntry::Msg { topic, payload } => {
                         client
@@ -168,6 +182,7 @@ impl ServeMqttCommand {
 
     async fn register_scenes(
         &self,
+        client: &mut Client,
         user_data: &UserData,
         hub: &Hub,
         reg: &mut HassRegistration,
@@ -179,6 +194,12 @@ impl ServeMqttCommand {
             .into_iter()
             .map(|room| (room.id, room.name))
             .collect();
+
+        client
+            .subscribe(&format!("{MODEL}/scene/+/set"), QoS::AtMostOnce)
+            .await?;
+
+        let serial = &user_data.serial_number;
 
         for scene in scenes {
             let scene_id = scene.id;
@@ -194,8 +215,8 @@ impl ServeMqttCommand {
             let data = serde_json::json!({
                 "name": serde_json::Value::Null,
                 "unique_id": unique_id,
-                "availability_topic": format!("{MODEL}/scene/{scene_id}/availability"),
-                "command_topic": format!("{MODEL}/scene/{scene_id}/set"),
+                "availability_topic": format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+                "command_topic": format!("{MODEL}/scene/{serial}/{scene_id}/set"),
                 "payload_on": "ON",
                 "device": {
                     "suggested_area": area,
@@ -209,13 +230,22 @@ impl ServeMqttCommand {
                 },
             });
 
-            // Tell hass about this shade
+            // Delete legacy scene
+            reg.delete(format!(
+                "{}/scene/{unique_id}/config",
+                self.discovery_prefix
+            ));
+
+            // Tell hass about this scene
             reg.config(
                 format!("{}/scene/{unique_id}/config", self.discovery_prefix),
                 serde_json::to_string(&data)?,
             );
 
-            reg.update(format!("{MODEL}/scene/{scene_id}/availability"), "online");
+            reg.update(
+                format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+                "online",
+            );
         }
 
         Ok(())
@@ -223,6 +253,7 @@ impl ServeMqttCommand {
 
     async fn register_shades(
         &self,
+        client: &mut Client,
         user_data: &UserData,
         hub: &Hub,
         reg: &mut HassRegistration,
@@ -234,6 +265,17 @@ impl ServeMqttCommand {
             .into_iter()
             .map(|room| (room.id, room.name))
             .collect();
+
+        client
+            .subscribe(&format!("{MODEL}/shade/+/+/set_position"), QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe(&format!("{MODEL}/shade/+/+/command"), QoS::AtMostOnce)
+            .await?;
+        client
+            .subscribe(&format!("{MODEL}/scene/+/+/set"), QoS::AtMostOnce)
+            .await?;
+        let serial = &user_data.serial_number;
 
         for shade in &shades {
             let position = match shade.positions.clone() {
@@ -279,11 +321,11 @@ impl ServeMqttCommand {
                     "name": shade_name ,
                     "device_class": "shade",
                     "unique_id": unique_id,
-                    "state_topic": format!("{MODEL}/shade/{shade_id}/state"),
-                    "position_topic": format!("{MODEL}/shade/{shade_id}/position"),
-                    "availability_topic": format!("{MODEL}/shade/{shade_id}/availability"),
-                    "set_position_topic": format!("{MODEL}/shade/{shade_id}/set_position"),
-                    "command_topic": format!("{MODEL}/shade/{shade_id}/command"),
+                    "state_topic": format!("{MODEL}/shade/{serial}/{shade_id}/state"),
+                    "position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/position"),
+                    "availability_topic": format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
+                    "set_position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/set_position"),
+                    "command_topic": format!("{MODEL}/shade/{serial}/{shade_id}/command"),
                     "device": {
                         "suggested_area": area,
                         "identifiers": [
@@ -304,13 +346,21 @@ impl ServeMqttCommand {
                     },
                 });
 
+                // Delete legacy version of this shade, for those upgrading.
+                // TODO: remove this, or find some way to keep track of what
+                // version of things are already present in hass
+                reg.delete(format!("{}/cover/{shade_id}/config", self.discovery_prefix));
+
                 // Tell hass about this shade
                 reg.config(
-                    format!("{}/cover/{shade_id}/config", self.discovery_prefix),
+                    format!("{}/cover/{serial}-{shade_id}/config", self.discovery_prefix),
                     serde_json::to_string(&data)?,
                 );
 
-                reg.update(format!("{MODEL}/shade/{shade_id}/availability"), "online");
+                reg.update(
+                    format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
+                    "online",
+                );
 
                 // We may not know the position; this can happen when the shade is
                 // partially out of sync, for example, for a top-down-bottom-up
@@ -318,11 +368,11 @@ impl ServeMqttCommand {
                 // is blank
                 if let Some(pos) = pos {
                     reg.update(
-                        format!("{MODEL}/shade/{shade_id}/position"),
+                        format!("{MODEL}/shade/{serial}/{shade_id}/position"),
                         format!("{pos}"),
                     );
                     let state = if pos == 0 { "closed" } else { "open" };
-                    reg.update(format!("{MODEL}/shade/{shade_id}/state"), state);
+                    reg.update(format!("{MODEL}/shade/{serial}/{shade_id}/state"), state);
                 }
             }
         }
@@ -333,12 +383,13 @@ impl ServeMqttCommand {
     async fn advise_of_state_label(
         &self,
         client: &mut Client,
+        serial: &str,
         shade_id: &str,
         state: &str,
     ) -> anyhow::Result<()> {
         client
             .publish(
-                &format!("{MODEL}/shade/{shade_id}/state"),
+                &format!("{MODEL}/shade/{serial}/{shade_id}/state"),
                 &state.as_bytes(),
                 QoS::AtMostOnce,
                 false,
@@ -350,12 +401,13 @@ impl ServeMqttCommand {
     async fn handle_position(
         &self,
         client: &mut Client,
+        serial: &str,
         shade_id: &str,
         position: u8,
     ) -> anyhow::Result<()> {
         client
             .publish(
-                &format!("{MODEL}/shade/{shade_id}/position"),
+                &format!("{MODEL}/shade/{serial}/{shade_id}/position"),
                 &format!("{position}").as_bytes(),
                 QoS::AtMostOnce,
                 false,
@@ -384,6 +436,7 @@ impl ServeMqttCommand {
         /// to ignore the content type and extract from the data ourselves.
         async fn pv_postback(
             State(tx): State<Sender<ServerEvent>>,
+            Path(serial): Path<String>,
             body: String,
         ) -> Result<Response, Response> {
             #[derive(Deserialize, Debug)]
@@ -397,7 +450,7 @@ impl ServeMqttCommand {
                 let data: Vec<HomeAutomationPostBackData> =
                     serde_json::from_slice(&decoded).map_err(generic)?;
                 log::debug!("postback: {data:?}");
-                tx.send(ServerEvent::HomeAutomationData(data))
+                tx.send(ServerEvent::HomeAutomationData { serial, data })
                     .await
                     .map_err(generic)?;
             } else if let Ok(config) = serde_urlencoded::from_str::<ConfigUpdate>(&body) {
@@ -411,7 +464,7 @@ impl ServeMqttCommand {
         }
 
         let app = Router::new()
-            .route("/pv-postback", post(pv_postback))
+            .route("/pv-postback/:serial", post(pv_postback))
             .with_state(tx);
 
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", 0)).await?;
@@ -430,8 +483,10 @@ impl ServeMqttCommand {
         let mut reg = HassRegistration::new();
 
         self.register_hub(&user_data, &mut reg).await?;
-        self.register_shades(&user_data, &hub, &mut reg).await?;
-        self.register_scenes(&user_data, &hub, &mut reg).await?;
+        self.register_shades(client, &user_data, &hub, &mut reg)
+            .await?;
+        self.register_scenes(client, &user_data, &hub, &mut reg)
+            .await?;
         reg.apply_updates(client).await?;
         Ok(())
     }
@@ -463,9 +518,21 @@ impl ServeMqttCommand {
 
         let hub = args.hub().await?;
         let hub = ResolvedHub::with_hub(hub).await;
+        let serial = hub
+            .user_data
+            .as_ref()
+            .map(|ud| ud.serial_number.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Unable to determine the serial number \
+                    of the hub. The hub is not be responding correctly \
+                    and may need to be restarted"
+                )
+            })?;
 
         let http_port = self.setup_http_server(tx.clone()).await?;
-        self.update_homeautomation_hook(&hub, http_port).await?;
+        self.update_homeautomation_hook(&hub, http_port, &serial)
+            .await?;
 
         let mut client = Client::with_auto_id()?;
 
@@ -486,24 +553,6 @@ impl ServeMqttCommand {
                 &format!("{}/status", self.discovery_prefix),
                 QoS::AtMostOnce,
             )
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/shade/+/state"), QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/shade/+/position"), QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/shade/+/set_position"), QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/shade/+/availability"), QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/shade/+/command"), QoS::AtMostOnce)
-            .await?;
-        client
-            .subscribe(&format!("{MODEL}/scene/+/set"), QoS::AtMostOnce)
             .await?;
 
         self.register_with_hass(&hub, &mut client).await?;
@@ -554,13 +603,14 @@ impl ServeMqttCommand {
             }
         });
 
-        self.serve(hub, client, rx, http_port).await;
+        self.serve(hub, &serial, client, rx, http_port).await;
         Ok(())
     }
 
     async fn handle_mqtt_message(
         &self,
         msg: Message,
+        actual_serial: &str,
         hub: &Hub,
         client: &mut Client,
     ) -> anyhow::Result<()> {
@@ -571,7 +621,15 @@ impl ServeMqttCommand {
         }
 
         let topic: Vec<_> = msg.topic.split('/').collect();
-        if let [_, device_kind, target_id, kind] = topic.as_slice() {
+        if let [_, device_kind, serial, target_id, kind] = topic.as_slice() {
+            if *serial != actual_serial {
+                log::trace!(
+                    "ignoring {topic:?} which is intended for \
+                    serial={serial}, while we are serial {actual_serial}"
+                );
+                return Ok(());
+            }
+
             match *device_kind {
                 "shade" => {
                     let shade_id = target_id;
@@ -610,7 +668,7 @@ impl ServeMqttCommand {
                                 .await?;
                         }
                         "command" => {
-                            log::info!("OPEN {shade_id} {}", shade.name());
+                            log::info!("{payload} {shade_id} {}", shade.name());
                             match payload.as_ref() {
                                 "OPEN" => {
                                     hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
@@ -647,6 +705,7 @@ impl ServeMqttCommand {
 
     async fn handle_pv_event(
         &self,
+        serial: &str,
         item: HomeAutomationPostBackData,
         client: &mut Client,
     ) -> anyhow::Result<()> {
@@ -662,31 +721,32 @@ impl ServeMqttCommand {
         match item.record_type {
             HomeAutomationRecordType::Stops => {
                 if let Some(pct) = item.stopped_position {
-                    self.handle_position(client, &shade_id, pct).await?;
+                    self.handle_position(client, serial, &shade_id, pct).await?;
 
                     let state = if pct == 0 { "closed" } else { "open" };
-                    self.advise_of_state_label(client, &shade_id, state).await?;
+                    self.advise_of_state_label(client, serial, &shade_id, state)
+                        .await?;
                 }
             }
             HomeAutomationRecordType::BeginsMoving => {
                 if let Some(pct) = item.current_position {
-                    self.handle_position(client, &shade_id, pct).await?;
+                    self.handle_position(client, serial, &shade_id, pct).await?;
                 }
             }
             HomeAutomationRecordType::StartsClosing => {
-                self.advise_of_state_label(client, &shade_id, "closing")
+                self.advise_of_state_label(client, serial, &shade_id, "closing")
                     .await?;
             }
             HomeAutomationRecordType::StartsOpening => {
-                self.advise_of_state_label(client, &shade_id, "opening")
+                self.advise_of_state_label(client, serial, &shade_id, "opening")
                     .await?;
             }
             HomeAutomationRecordType::HasOpened | HomeAutomationRecordType::HasFullyOpened => {
-                self.advise_of_state_label(client, &shade_id, "open")
+                self.advise_of_state_label(client, serial, &shade_id, "open")
                     .await?;
             }
             HomeAutomationRecordType::HasClosed | HomeAutomationRecordType::HasFullyClosed => {
-                self.advise_of_state_label(client, &shade_id, "closed")
+                self.advise_of_state_label(client, serial, &shade_id, "closed")
                     .await?;
             }
             HomeAutomationRecordType::TargetLevelChanged => {}
@@ -695,33 +755,55 @@ impl ServeMqttCommand {
         Ok(())
     }
 
-    async fn update_homeautomation_hook(&self, hub: &Hub, http_port: u16) -> anyhow::Result<()> {
+    async fn update_homeautomation_hook(
+        &self,
+        hub: &Hub,
+        http_port: u16,
+        serial: &str,
+    ) -> anyhow::Result<()> {
         let addr = hub.suggest_bind_address().await?;
-        hub.enable_home_automation_hook(&format!("{addr}:{http_port}/pv-postback"))
+        hub.enable_home_automation_hook(&format!("{addr}:{http_port}/pv-postback/{serial}"))
             .await?;
         Ok(())
     }
 
     async fn handle_discovery(
         &self,
+        actual_serial: &str,
         new_hub: ResolvedHub,
         hub: &mut ResolvedHub,
         client: &mut Client,
         http_port: u16,
     ) -> anyhow::Result<()> {
-        let changed = match (&new_hub.user_data, &hub.user_data) {
-            (Some(n), Some(e)) => n.ip != e.ip || n.hub_name != e.hub_name,
-            (None, Some(_)) | (Some(_), None) => true,
-            (None, None) => false,
-        };
-
-        if !changed {
-            return Ok(());
+        match &new_hub.user_data {
+            Some(ud) => {
+                if ud.serial_number != actual_serial {
+                    // It's a different hub
+                    return Ok(());
+                }
+                match &hub.user_data {
+                    Some(eud) => {
+                        let changed = ud.ip != eud.ip || ud.hub_name != eud.hub_name;
+                        if !changed {
+                            return Ok(());
+                        }
+                    }
+                    None => {
+                        // Hub wasn't responding, but is now
+                    }
+                }
+            }
+            None => {
+                // Hub isn't responding. Do something to update an entity
+                // in hass so that this is visible
+                return Ok(());
+            }
         }
-        log::info!("Hub ip and/or name changed");
+        log::info!("Hub ip, name or connectivity status changed");
 
         *hub = new_hub;
-        self.update_homeautomation_hook(hub, http_port).await?;
+        self.update_homeautomation_hook(hub, http_port, actual_serial)
+            .await?;
         self.register_with_hass(hub, client).await?;
         Ok(())
     }
@@ -729,6 +811,7 @@ impl ServeMqttCommand {
     async fn serve(
         &self,
         mut hub: ResolvedHub,
+        actual_serial: &str,
         mut client: Client,
         mut rx: Receiver<ServerEvent>,
         http_port: u16,
@@ -737,17 +820,20 @@ impl ServeMqttCommand {
         while let Some(msg) = rx.recv().await {
             match msg {
                 ServerEvent::MqttMessage(msg) => {
-                    if let Err(err) = self.handle_mqtt_message(msg, &hub, &mut client).await {
+                    if let Err(err) = self
+                        .handle_mqtt_message(msg, actual_serial, &hub, &mut client)
+                        .await
+                    {
                         log::error!("handling mqtt message: {err:#}");
                     }
                 }
-                ServerEvent::HomeAutomationData(mut data) => {
+                ServerEvent::HomeAutomationData { serial, mut data } => {
                     // Re-order the events so that the closed/open events happen
                     // after closing/opening
                     data.sort_by(|a, b| a.record_type.cmp(&b.record_type));
 
                     for item in data {
-                        if let Err(err) = self.handle_pv_event(item, &mut client).await {
+                        if let Err(err) = self.handle_pv_event(&serial, item, &mut client).await {
                             log::error!("handling pv event: {err:#}");
                         }
                     }
@@ -755,7 +841,13 @@ impl ServeMqttCommand {
 
                 ServerEvent::HubDiscovered(resolved_hub) => {
                     if let Err(err) = self
-                        .handle_discovery(resolved_hub, &mut hub, &mut client, http_port)
+                        .handle_discovery(
+                            actual_serial,
+                            resolved_hub,
+                            &mut hub,
+                            &mut client,
+                            http_port,
+                        )
                         .await
                     {
                         log::error!("While updating hass state: {err:#?}");
