@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::net::IpAddr;
 use wez_mdns::RecordKind;
 
@@ -7,7 +8,8 @@ pub async fn resolve_hub() -> anyhow::Result<IpAddr> {
         "_powerview._tcp.local",
         wez_mdns::QueryParameters::SERVICE_LOOKUP,
     )
-    .await?;
+    .await
+    .context("MDNS discovery")?;
 
     let mut ipv4 = None;
     let mut ipv6 = None;

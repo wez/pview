@@ -1,6 +1,7 @@
 use crate::api_types::*;
 use crate::discovery::resolve_hub;
 use crate::http_helpers::{get_request_with_json_response, request_with_json_response};
+use anyhow::Context;
 use reqwest::Method;
 use serde::Deserialize;
 use serde_json::json;
@@ -70,7 +71,10 @@ impl Hub {
     }
 
     pub async fn discover() -> anyhow::Result<Self> {
-        let addr = resolve_hub().await?;
+        let addr = resolve_hub().await.context(
+            "Failed to discover the PowerView Hub. \
+             Ensure that pview is running on the same network as the Hub!",
+        )?;
         Ok(Hub { addr })
     }
 
