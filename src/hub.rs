@@ -19,6 +19,10 @@ impl Hub {
         format!("http://{}/{extra}", self.addr)
     }
 
+    pub fn addr(&self) -> IpAddr {
+        self.addr
+    }
+
     pub async fn list_rooms(&self) -> anyhow::Result<Vec<RoomData>> {
         let mut resp: RoomResponse = get_request_with_json_response(self.url("api/rooms")).await?;
         resp.room_data
@@ -68,6 +72,10 @@ impl Hub {
             .sort_by_key(|item| (item.order, item.name.clone()));
 
         Ok(resp.shade_data)
+    }
+
+    pub fn with_addr(addr: IpAddr) -> Self {
+        Self { addr }
     }
 
     pub async fn discover() -> anyhow::Result<Self> {

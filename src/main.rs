@@ -27,6 +27,7 @@ pub enum SubCommand {
     ActivateScene(commands::activate_scene::ActivateSceneCommand),
     ServeMqtt(commands::serve_mqtt::ServeMqttCommand),
     HubInfo(commands::hub_info::HubInfoCommand),
+    ListHubs(commands::list_hubs::ListHubsCommand),
 }
 
 impl SubCommand {
@@ -39,6 +40,7 @@ impl SubCommand {
             Self::ActivateScene(cmd) => cmd.run(args).await,
             Self::ServeMqtt(cmd) => cmd.run(args).await,
             Self::HubInfo(cmd) => cmd.run(args).await,
+            Self::ListHubs(cmd) => cmd.run(args).await,
         }
     }
 }
