@@ -25,7 +25,7 @@ RUN --mount=type=ssh \
     --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/work/target \
-    cargo build --target x86_64-alpine-linux-musl --release && cp target/*/release/pview .
+    cargo build --release && cp target/*/release/pview .
 
 ####################################################################################################
 ## Final image
@@ -43,6 +43,7 @@ COPY --from=builder /work/pview ./
 
 USER pview:pview
 LABEL org.opencontainers.image.source="https://github.com/wez/pview"
+ENV RUST_BACKTRACE=full
 
 CMD ["/app/pview", "serve-mqtt"]
 
