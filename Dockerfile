@@ -25,7 +25,7 @@ RUN --mount=type=ssh \
     --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/work/target \
-    cargo build --release && cp target/*/release/pview .
+    cargo install --bin pview --path .
 
 ####################################################################################################
 ## Final image
@@ -39,11 +39,13 @@ COPY --from=builder /etc/group /etc/group
 WORKDIR /app
 
 COPY --from=builder /lib/ld-musl*.so* /lib/libssl*.so* /lib/libcrypto*.so* /usr/lib/libgcc*.so* /lib/
-COPY --from=builder /work/pview ./
+COPY --from=builder /root/.cargo/bin/pview ./
 
 USER pview:pview
 LABEL org.opencontainers.image.source="https://github.com/wez/pview"
-ENV RUST_BACKTRACE=full
+ENV \
+  RUST_BACKTRACE=full \
+  PATH=/app:$PATH
 
 CMD ["/app/pview", "serve-mqtt"]
 
