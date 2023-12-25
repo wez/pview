@@ -29,7 +29,9 @@ fn ip_from_response(response: wez_mdns::Response) -> anyhow::Result<IpAddr> {
     } else if let Some(v6) = ipv6 {
         Ok(v6.into())
     } else {
-        anyhow::bail!("failed to resolve a v4 or v6 address for the hub. {response:?}");
+        anyhow::bail!(
+            "Response didn't include either a v4 or v6 address for the hub. {response:?}"
+        );
     }
 }
 
@@ -109,7 +111,7 @@ pub async fn resolve_hubs(timeout: Option<Duration>) -> anyhow::Result<Receiver<
                     }
                 }
                 Err(err) => {
-                    log::error!("{err:#?}");
+                    log::warn!("{err:#?}");
                 }
             }
         }

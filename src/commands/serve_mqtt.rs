@@ -602,29 +602,37 @@ impl ServeMqttCommand {
                                 shade_pos.position_1 = absolute;
                             }
 
+                            log::info!(
+                                "Set {shade_id} {} position to {position} ({shade_pos:?})",
+                                shade.name()
+                            );
                             hub.change_shade_position(actual_shade_id, shade_pos.clone())
                                 .await?;
                         }
-                        "command" => match payload.as_ref() {
-                            "OPEN" => {
-                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
-                                    .await?;
+                        "command" => {
+                            log::info!("OPEN {shade_id} {}", shade.name());
+                            match payload.as_ref() {
+                                "OPEN" => {
+                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
+                                        .await?;
+                                }
+                                "CLOSE" => {
+                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
+                                        .await?;
+                                }
+                                "STOP" => {
+                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
+                                        .await?;
+                                }
+                                _ => {}
                             }
-                            "CLOSE" => {
-                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
-                                    .await?;
-                            }
-                            "STOP" => {
-                                hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
-                                    .await?;
-                            }
-                            _ => {}
-                        },
+                        }
                         _ => {}
                     }
                 }
                 "scene" => {
                     let scene_id = target_id.parse()?;
+                    log::info!("SCENE {scene_id}");
                     hub.activate_scene(scene_id).await?;
                 }
                 _ => {
