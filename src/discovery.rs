@@ -42,11 +42,23 @@ pub async fn resolve_hub(timeout: Duration) -> anyhow::Result<IpAddr> {
         ..QueryParameters::SERVICE_LOOKUP
     };
 
-    let response = wez_mdns::resolve_one(POWERVIEW_SERVICE, params)
+    let disco_rx = wez_mdns::resolve(POWERVIEW_SERVICE, params)
         .await
         .context("MDNS discovery")?;
+    let mut responses = vec![];
+    while let Ok(response) = disco_rx.recv().await {
+        match ip_from_response(response) {
+            Ok(addr) => return Ok(addr),
+            Err(err) => {
+                responses.push(format!("{err:#?}"));
+            }
+        }
+    }
 
-    ip_from_response(response)
+    anyhow::bail!(
+        "Unable to discover PowerView Hub within {timeout:?}. {}",
+        responses.join(", ")
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -115,7 +127,6 @@ pub async fn resolve_hubs(timeout: Option<Duration>) -> anyhow::Result<Receiver<
                 }
             }
         }
-        log::warn!("fell out of disco loop");
     });
 
     Ok(rx)
