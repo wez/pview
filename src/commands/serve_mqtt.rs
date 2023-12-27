@@ -144,248 +144,258 @@ impl HassRegistration {
     }
 }
 
-impl ServeMqttCommand {
-    async fn register_hub(
-        user_data: &UserData,
-        state: &Arc<Pv2MqttState>,
-        reg: &mut HassRegistration,
-    ) -> anyhow::Result<()> {
-        let serial = &user_data.serial_number;
-        let data = serde_json::json!({
-            "name": "IP Address",
-            "unique_id": format!("{serial}-hub-ip"),
-            "state_topic": format!("{MODEL}/sensor/{serial}-hub-ip/state"),
-            "availability_topic": format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
-            "device": {
-                "identifiers": [
-                    format!("{MODEL}-{serial}"),
-                    user_data.serial_number,
-                    user_data.mac_address,
-                ],
-                "connections": [
-                    ["mac", user_data.mac_address],
-                ],
-                "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
-                "manufacturer": "Wez Furlong",
-                "model": MODEL,
-            },
-            "entity_category": "diagnostic",
-            "origin": {
-                "name": MODEL,
-                "sw": "0.0",
-                "url": "https://github.com/wez/pview",
-            },
-        });
+async fn register_hub(
+    user_data: &UserData,
+    state: &Arc<Pv2MqttState>,
+    reg: &mut HassRegistration,
+) -> anyhow::Result<()> {
+    let serial = &user_data.serial_number;
+    let data = serde_json::json!({
+        "name": "IP Address",
+        "unique_id": format!("{serial}-hub-ip"),
+        "state_topic": format!("{MODEL}/sensor/{serial}-hub-ip/state"),
+        "availability_topic": format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
+        "device": {
+            "identifiers": [
+                format!("{MODEL}-{serial}"),
+                user_data.serial_number,
+                user_data.mac_address,
+            ],
+            "connections": [
+                ["mac", user_data.mac_address],
+            ],
+            "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
+            "manufacturer": "Wez Furlong",
+            "model": MODEL,
+        },
+        "entity_category": "diagnostic",
+        "origin": {
+            "name": MODEL,
+            "sw": "0.0",
+            "url": "https://github.com/wez/pview",
+        },
+    });
 
-        reg.config(
-            format!("{}/sensor/{serial}-hub-ip/config", state.discovery_prefix),
-            serde_json::to_string(&data)?,
-        );
+    reg.config(
+        format!("{}/sensor/{serial}-hub-ip/config", state.discovery_prefix),
+        serde_json::to_string(&data)?,
+    );
 
-        reg.update(
-            format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
-            "online",
-        );
+    reg.update(
+        format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
+        "online",
+    );
 
-        reg.update(
-            format!("{MODEL}/sensor/{serial}-hub-ip/state"),
-            user_data.ip.clone(),
-        );
+    reg.update(
+        format!("{MODEL}/sensor/{serial}-hub-ip/state"),
+        user_data.ip.clone(),
+    );
 
-        Ok(())
-    }
+    Ok(())
+}
 
-    async fn register_scenes(
-        state: &Arc<Pv2MqttState>,
-        reg: &mut HassRegistration,
-    ) -> anyhow::Result<()> {
-        let hub = state.hub.load();
-        let scenes = hub.hub.list_scenes().await?;
-        let room_by_id: HashMap<_, _> = hub
-            .hub
-            .list_rooms()
-            .await?
-            .into_iter()
-            .map(|room| (room.id, room.name))
-            .collect();
+async fn register_shades(
+    state: &Arc<Pv2MqttState>,
+    reg: &mut HassRegistration,
+) -> anyhow::Result<()> {
+    let hub = state.hub.load();
+    let shades = hub.hub.list_shades(None, None).await?;
+    let room_by_id: HashMap<_, _> = hub
+        .hub
+        .list_rooms()
+        .await?
+        .into_iter()
+        .map(|room| (room.id, room.name))
+        .collect();
 
-        let serial = &state.serial;
+    let serial = &state.serial;
 
-        for scene in scenes {
-            let scene_id = scene.id;
-            let scene_name = scene.name.to_string();
+    for shade in &shades {
+        let position = match shade.positions.clone() {
+            Some(p) => p,
+            None => continue,
+        };
 
-            let area = room_by_id
-                .get(&scene.room_id)
-                .map(|name| serde_json::json!(name.as_str()))
+        let mut shades = vec![(
+            shade.id.to_string(),
+            serde_json::Value::Null,
+            Some(position.pos1_percent()),
+        )];
+
+        // The shade data doesn't always include the second rail
+        // position, so we must use the capabilities to decide if
+        // it should actually be there
+        if shade
+            .capabilities
+            .flags()
+            .contains(ShadeCapabilityFlags::SECONDARY_RAIL)
+        {
+            shades.push((
+                format!("{}{SECONDARY_SUFFIX}", shade.id),
+                serde_json::json!("Middle Rail"),
+                position.pos2_percent(),
+            ));
+        }
+
+        let device_id = format!("{serial}-{}", shade.id);
+
+        for (shade_id, shade_name, pos) in shades {
+            let area = shade
+                .room_id
+                .and_then(|room_id| {
+                    room_by_id
+                        .get(&room_id)
+                        .map(|name| serde_json::json!(name.as_str()))
+                })
                 .unwrap_or(serde_json::Value::Null);
-
-            let unique_id = format!("{serial}-scene-{scene_id}");
+            let unique_id = format!("{serial}-{shade_id}");
 
             let data = serde_json::json!({
-                "name": serde_json::Value::Null,
+                "name": shade_name ,
+                "device_class": "shade",
                 "unique_id": unique_id,
-                "availability_topic": format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
-                "command_topic": format!("{MODEL}/scene/{serial}/{scene_id}/set"),
-                "payload_on": "ON",
+                "state_topic": format!("{MODEL}/shade/{serial}/{shade_id}/state"),
+                "position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/position"),
+                "availability_topic": format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
+                "set_position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/set_position"),
+                "command_topic": format!("{MODEL}/shade/{serial}/{shade_id}/command"),
                 "device": {
                     "suggested_area": area,
                     "identifiers": [
-                        unique_id,
+                        device_id
                     ],
                     "via_device": format!("{MODEL}-{serial}"),
-                    "name": scene_name,
-                    "manufacturer": "Wez Furlong",
+                    "name": shade.name(),
+                    "manufacturer": "Hunter Douglas",
                     "model": MODEL,
+                    "sw_version": shade.firmware.as_ref().map(|vers| {
+                        format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)
+                    }).unwrap_or_else(|| "unknown".to_string()),
+                },
+                "origin": {
+                    "name": MODEL,
+                    "sw": "0.0",
+                    "url": "https://github.com/wez/pview",
                 },
             });
 
-            // Delete legacy scene
+            // Delete legacy version of this shade, for those upgrading.
+            // TODO: remove this, or find some way to keep track of what
+            // version of things are already present in hass
             reg.delete(format!(
-                "{}/scene/{unique_id}/config",
+                "{}/cover/{shade_id}/config",
                 state.discovery_prefix
             ));
 
-            // Tell hass about this scene
+            // Tell hass about this shade
             reg.config(
-                format!("{}/scene/{unique_id}/config", state.discovery_prefix),
+                format!(
+                    "{}/cover/{serial}-{shade_id}/config",
+                    state.discovery_prefix
+                ),
                 serde_json::to_string(&data)?,
             );
 
             reg.update(
-                format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+                format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
                 "online",
             );
-        }
 
-        Ok(())
-    }
-
-    async fn register_shades(
-        state: &Arc<Pv2MqttState>,
-        reg: &mut HassRegistration,
-    ) -> anyhow::Result<()> {
-        let hub = state.hub.load();
-        let shades = hub.hub.list_shades(None, None).await?;
-        let room_by_id: HashMap<_, _> = hub
-            .hub
-            .list_rooms()
-            .await?
-            .into_iter()
-            .map(|room| (room.id, room.name))
-            .collect();
-
-        let serial = &state.serial;
-
-        for shade in &shades {
-            let position = match shade.positions.clone() {
-                Some(p) => p,
-                None => continue,
-            };
-
-            let mut shades = vec![(
-                shade.id.to_string(),
-                serde_json::Value::Null,
-                Some(position.pos1_percent()),
-            )];
-
-            // The shade data doesn't always include the second rail
-            // position, so we must use the capabilities to decide if
-            // it should actually be there
-            if shade
-                .capabilities
-                .flags()
-                .contains(ShadeCapabilityFlags::SECONDARY_RAIL)
-            {
-                shades.push((
-                    format!("{}{SECONDARY_SUFFIX}", shade.id),
-                    serde_json::json!("Middle Rail"),
-                    position.pos2_percent(),
-                ));
-            }
-
-            let device_id = format!("{serial}-{}", shade.id);
-
-            for (shade_id, shade_name, pos) in shades {
-                let area = shade
-                    .room_id
-                    .and_then(|room_id| {
-                        room_by_id
-                            .get(&room_id)
-                            .map(|name| serde_json::json!(name.as_str()))
-                    })
-                    .unwrap_or(serde_json::Value::Null);
-                let unique_id = format!("{serial}-{shade_id}");
-
-                let data = serde_json::json!({
-                    "name": shade_name ,
-                    "device_class": "shade",
-                    "unique_id": unique_id,
-                    "state_topic": format!("{MODEL}/shade/{serial}/{shade_id}/state"),
-                    "position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/position"),
-                    "availability_topic": format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
-                    "set_position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/set_position"),
-                    "command_topic": format!("{MODEL}/shade/{serial}/{shade_id}/command"),
-                    "device": {
-                        "suggested_area": area,
-                        "identifiers": [
-                            device_id
-                        ],
-                        "via_device": format!("{MODEL}-{serial}"),
-                        "name": shade.name(),
-                        "manufacturer": "Hunter Douglas",
-                        "model": MODEL,
-                        "sw_version": shade.firmware.as_ref().map(|vers| {
-                            format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)
-                        }).unwrap_or_else(|| "unknown".to_string()),
-                    },
-                    "origin": {
-                        "name": MODEL,
-                        "sw": "0.0",
-                        "url": "https://github.com/wez/pview",
-                    },
-                });
-
-                // Delete legacy version of this shade, for those upgrading.
-                // TODO: remove this, or find some way to keep track of what
-                // version of things are already present in hass
-                reg.delete(format!(
-                    "{}/cover/{shade_id}/config",
-                    state.discovery_prefix
-                ));
-
-                // Tell hass about this shade
-                reg.config(
-                    format!(
-                        "{}/cover/{serial}-{shade_id}/config",
-                        state.discovery_prefix
-                    ),
-                    serde_json::to_string(&data)?,
-                );
-
+            // We may not know the position; this can happen when the shade is
+            // partially out of sync, for example, for a top-down-bottom-up
+            // shade, I've seen the primary position reported, but the secondary
+            // is blank
+            if let Some(pos) = pos {
                 reg.update(
-                    format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
-                    "online",
+                    format!("{MODEL}/shade/{serial}/{shade_id}/position"),
+                    format!("{pos}"),
                 );
-
-                // We may not know the position; this can happen when the shade is
-                // partially out of sync, for example, for a top-down-bottom-up
-                // shade, I've seen the primary position reported, but the secondary
-                // is blank
-                if let Some(pos) = pos {
-                    reg.update(
-                        format!("{MODEL}/shade/{serial}/{shade_id}/position"),
-                        format!("{pos}"),
-                    );
-                    let state = if pos == 0 { "closed" } else { "open" };
-                    reg.update(format!("{MODEL}/shade/{serial}/{shade_id}/state"), state);
-                }
+                let state = if pos == 0 { "closed" } else { "open" };
+                reg.update(format!("{MODEL}/shade/{serial}/{shade_id}/state"), state);
             }
         }
-
-        Ok(())
     }
 
+    Ok(())
+}
+
+async fn register_scenes(
+    state: &Arc<Pv2MqttState>,
+    reg: &mut HassRegistration,
+) -> anyhow::Result<()> {
+    let hub = state.hub.load();
+    let scenes = hub.hub.list_scenes().await?;
+    let room_by_id: HashMap<_, _> = hub
+        .hub
+        .list_rooms()
+        .await?
+        .into_iter()
+        .map(|room| (room.id, room.name))
+        .collect();
+
+    let serial = &state.serial;
+
+    for scene in scenes {
+        let scene_id = scene.id;
+        let scene_name = scene.name.to_string();
+
+        let area = room_by_id
+            .get(&scene.room_id)
+            .map(|name| serde_json::json!(name.as_str()))
+            .unwrap_or(serde_json::Value::Null);
+
+        let unique_id = format!("{serial}-scene-{scene_id}");
+
+        let data = serde_json::json!({
+            "name": serde_json::Value::Null,
+            "unique_id": unique_id,
+            "availability_topic": format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+            "command_topic": format!("{MODEL}/scene/{serial}/{scene_id}/set"),
+            "payload_on": "ON",
+            "device": {
+                "suggested_area": area,
+                "identifiers": [
+                    unique_id,
+                ],
+                "via_device": format!("{MODEL}-{serial}"),
+                "name": scene_name,
+                "manufacturer": "Wez Furlong",
+                "model": MODEL,
+            },
+        });
+
+        // Delete legacy scene
+        reg.delete(format!(
+            "{}/scene/{unique_id}/config",
+            state.discovery_prefix
+        ));
+
+        // Tell hass about this scene
+        reg.config(
+            format!("{}/scene/{unique_id}/config", state.discovery_prefix),
+            serde_json::to_string(&data)?,
+        );
+
+        reg.update(
+            format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+            "online",
+        );
+    }
+
+    Ok(())
+}
+
+async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
+    let mut reg = HassRegistration::new();
+
+    register_hub(&state.hub.load().user_data, state, &mut reg).await?;
+    register_shades(state, &mut reg).await?;
+    register_scenes(state, &mut reg).await?;
+    reg.apply_updates(state).await?;
+    Ok(())
+}
+
+impl ServeMqttCommand {
     async fn advise_of_state_label(
         &self,
         state: &Arc<Pv2MqttState>,
@@ -490,16 +500,6 @@ impl ServeMqttCommand {
         Ok(addr.port())
     }
 
-    async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
-        let mut reg = HassRegistration::new();
-
-        Self::register_hub(&state.hub.load().user_data, state, &mut reg).await?;
-        Self::register_shades(state, &mut reg).await?;
-        Self::register_scenes(state, &mut reg).await?;
-        reg.apply_updates(state).await?;
-        Ok(())
-    }
-
     pub async fn run(&self, args: &crate::Args) -> anyhow::Result<()> {
         let mqtt_host = match &self.host {
             Some(h) => h.to_string(),
@@ -595,7 +595,7 @@ impl ServeMqttCommand {
             )
             .await?;
 
-        Self::register_with_hass(&state).await?;
+        register_with_hass(&state).await?;
 
         {
             let tx = tx.clone();
@@ -746,7 +746,7 @@ impl ServeMqttCommand {
                     user_data,
                 }));
                 self.update_homeautomation_hook(state).await?;
-                Self::register_with_hass(&state).await?;
+                register_with_hass(&state).await?;
                 Ok(())
             }
             None => {
@@ -799,7 +799,7 @@ impl ServeMqttCommand {
                 }
 
                 ServerEvent::PeriodicStateUpdate => {
-                    if let Err(err) = Self::register_with_hass(&state).await {
+                    if let Err(err) = register_with_hass(&state).await {
                         log::error!("While updating hass state: {err:#?}");
                     }
                 }
@@ -968,7 +968,7 @@ async fn mqtt_homeassitant_status(
     _: Message,
     state: Arc<Pv2MqttState>,
 ) -> anyhow::Result<()> {
-    ServeMqttCommand::register_with_hass(&state).await
+    register_with_hass(&state).await
 }
 
 type MqttHandlerResult = anyhow::Result<()>;
