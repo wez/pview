@@ -6,10 +6,19 @@ use crate::discovery::ResolvedHub;
 use crate::hub::Hub;
 use crate::opt_env_var;
 use anyhow::Context;
+use arc_swap::ArcSwap;
 use axum::extract::Path;
+use matchit::Router;
 use mosquitto_rs::*;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -110,7 +119,7 @@ impl HassRegistration {
         self.updates.push(RegEntry::msg(topic, payload));
     }
 
-    pub async fn apply_updates(self, client: &mut Client) -> anyhow::Result<()> {
+    pub async fn apply_updates(self, client: &Client) -> anyhow::Result<()> {
         for queue in [self.deletes, self.configs, self.updates] {
             for entry in queue {
                 match entry {
@@ -131,8 +140,8 @@ impl HassRegistration {
 
 impl ServeMqttCommand {
     async fn register_hub(
-        &self,
         user_data: &UserData,
+        state: &Arc<Pv2MqttState>,
         reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
         let serial = &user_data.serial_number;
@@ -163,7 +172,7 @@ impl ServeMqttCommand {
         });
 
         reg.config(
-            format!("{}/sensor/{serial}-hub-ip/config", self.discovery_prefix),
+            format!("{}/sensor/{serial}-hub-ip/config", state.discovery_prefix),
             serde_json::to_string(&data)?,
         );
 
@@ -181,25 +190,20 @@ impl ServeMqttCommand {
     }
 
     async fn register_scenes(
-        &self,
-        client: &mut Client,
-        user_data: &UserData,
-        hub: &Hub,
+        state: &Arc<Pv2MqttState>,
         reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
-        let scenes = hub.list_scenes().await?;
+        let hub = state.hub.load();
+        let scenes = hub.hub.list_scenes().await?;
         let room_by_id: HashMap<_, _> = hub
+            .hub
             .list_rooms()
             .await?
             .into_iter()
             .map(|room| (room.id, room.name))
             .collect();
 
-        client
-            .subscribe(&format!("{MODEL}/scene/+/set"), QoS::AtMostOnce)
-            .await?;
-
-        let serial = &user_data.serial_number;
+        let serial = &state.serial;
 
         for scene in scenes {
             let scene_id = scene.id;
@@ -210,7 +214,7 @@ impl ServeMqttCommand {
                 .map(|name| serde_json::json!(name.as_str()))
                 .unwrap_or(serde_json::Value::Null);
 
-            let unique_id = format!("{}-scene-{scene_id}", user_data.serial_number);
+            let unique_id = format!("{serial}-scene-{scene_id}");
 
             let data = serde_json::json!({
                 "name": serde_json::Value::Null,
@@ -223,7 +227,7 @@ impl ServeMqttCommand {
                     "identifiers": [
                         unique_id,
                     ],
-                    "via_device": format!("{MODEL}-{}", user_data.serial_number),
+                    "via_device": format!("{MODEL}-{serial}"),
                     "name": scene_name,
                     "manufacturer": "Wez Furlong",
                     "model": MODEL,
@@ -233,12 +237,12 @@ impl ServeMqttCommand {
             // Delete legacy scene
             reg.delete(format!(
                 "{}/scene/{unique_id}/config",
-                self.discovery_prefix
+                state.discovery_prefix
             ));
 
             // Tell hass about this scene
             reg.config(
-                format!("{}/scene/{unique_id}/config", self.discovery_prefix),
+                format!("{}/scene/{unique_id}/config", state.discovery_prefix),
                 serde_json::to_string(&data)?,
             );
 
@@ -252,30 +256,28 @@ impl ServeMqttCommand {
     }
 
     async fn register_shades(
-        &self,
-        client: &mut Client,
-        user_data: &UserData,
-        hub: &Hub,
+        state: &Arc<Pv2MqttState>,
         reg: &mut HassRegistration,
     ) -> anyhow::Result<()> {
-        let shades = hub.list_shades(None, None).await?;
+        let hub = state.hub.load();
+        let shades = hub.hub.list_shades(None, None).await?;
         let room_by_id: HashMap<_, _> = hub
+            .hub
             .list_rooms()
             .await?
             .into_iter()
             .map(|room| (room.id, room.name))
             .collect();
 
-        client
-            .subscribe(&format!("{MODEL}/shade/+/+/set_position"), QoS::AtMostOnce)
-            .await?;
-        client
+        state
+            .client
             .subscribe(&format!("{MODEL}/shade/+/+/command"), QoS::AtMostOnce)
             .await?;
-        client
+        state
+            .client
             .subscribe(&format!("{MODEL}/scene/+/+/set"), QoS::AtMostOnce)
             .await?;
-        let serial = &user_data.serial_number;
+        let serial = &state.serial;
 
         for shade in &shades {
             let position = match shade.positions.clone() {
@@ -304,7 +306,7 @@ impl ServeMqttCommand {
                 ));
             }
 
-            let device_id = format!("{}-{}", user_data.serial_number, shade.id);
+            let device_id = format!("{serial}-{}", shade.id);
 
             for (shade_id, shade_name, pos) in shades {
                 let area = shade
@@ -315,7 +317,7 @@ impl ServeMqttCommand {
                             .map(|name| serde_json::json!(name.as_str()))
                     })
                     .unwrap_or(serde_json::Value::Null);
-                let unique_id = format!("{}-{shade_id}", user_data.serial_number);
+                let unique_id = format!("{serial}-{shade_id}");
 
                 let data = serde_json::json!({
                     "name": shade_name ,
@@ -331,7 +333,7 @@ impl ServeMqttCommand {
                         "identifiers": [
                             device_id
                         ],
-                        "via_device": format!("{MODEL}-{}", user_data.serial_number),
+                        "via_device": format!("{MODEL}-{serial}"),
                         "name": shade.name(),
                         "manufacturer": "Hunter Douglas",
                         "model": MODEL,
@@ -349,11 +351,17 @@ impl ServeMqttCommand {
                 // Delete legacy version of this shade, for those upgrading.
                 // TODO: remove this, or find some way to keep track of what
                 // version of things are already present in hass
-                reg.delete(format!("{}/cover/{shade_id}/config", self.discovery_prefix));
+                reg.delete(format!(
+                    "{}/cover/{shade_id}/config",
+                    state.discovery_prefix
+                ));
 
                 // Tell hass about this shade
                 reg.config(
-                    format!("{}/cover/{serial}-{shade_id}/config", self.discovery_prefix),
+                    format!(
+                        "{}/cover/{serial}-{shade_id}/config",
+                        state.discovery_prefix
+                    ),
                     serde_json::to_string(&data)?,
                 );
 
@@ -382,15 +390,18 @@ impl ServeMqttCommand {
 
     async fn advise_of_state_label(
         &self,
-        client: &mut Client,
-        serial: &str,
+        state: &Arc<Pv2MqttState>,
         shade_id: &str,
-        state: &str,
+        shade_state: &str,
     ) -> anyhow::Result<()> {
-        client
+        state
+            .client
             .publish(
-                &format!("{MODEL}/shade/{serial}/{shade_id}/state"),
-                &state.as_bytes(),
+                &format!(
+                    "{MODEL}/shade/{serial}/{shade_id}/state",
+                    serial = state.serial
+                ),
+                &shade_state.as_bytes(),
                 QoS::AtMostOnce,
                 false,
             )
@@ -400,14 +411,17 @@ impl ServeMqttCommand {
 
     async fn handle_position(
         &self,
-        client: &mut Client,
-        serial: &str,
+        state: &Arc<Pv2MqttState>,
         shade_id: &str,
         position: u8,
     ) -> anyhow::Result<()> {
-        client
+        state
+            .client
             .publish(
-                &format!("{MODEL}/shade/{serial}/{shade_id}/position"),
+                &format!(
+                    "{MODEL}/shade/{serial}/{shade_id}/position",
+                    serial = state.serial
+                ),
                 &format!("{position}").as_bytes(),
                 QoS::AtMostOnce,
                 false,
@@ -478,16 +492,13 @@ impl ServeMqttCommand {
         Ok(addr.port())
     }
 
-    async fn register_with_hass(&self, hub: &Hub, client: &mut Client) -> anyhow::Result<()> {
-        let user_data = hub.get_user_data().await?;
+    async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
         let mut reg = HassRegistration::new();
 
-        self.register_hub(&user_data, &mut reg).await?;
-        self.register_shades(client, &user_data, &hub, &mut reg)
-            .await?;
-        self.register_scenes(client, &user_data, &hub, &mut reg)
-            .await?;
-        reg.apply_updates(client).await?;
+        Self::register_hub(&state.hub.load().user_data, state, &mut reg).await?;
+        Self::register_shades(state, &mut reg).await?;
+        Self::register_scenes(state, &mut reg).await?;
+        reg.apply_updates(&state.client).await?;
         Ok(())
     }
 
@@ -517,24 +528,32 @@ impl ServeMqttCommand {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
 
         let hub = args.hub().await?;
-        let hub = ResolvedHub::with_hub(hub).await;
-        let serial = hub
-            .user_data
-            .as_ref()
-            .map(|ud| ud.serial_number.clone())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Unable to determine the serial number \
+        let mut hub = ResolvedHub::with_hub(hub).await;
+        let user_data = hub.user_data.take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unable to determine the serial number \
                     of the hub. The hub is not be responding correctly \
                     and may need to be restarted"
-                )
-            })?;
+            )
+        })?;
+        let serial = &user_data.serial_number.to_string();
 
         let http_port = self.setup_http_server(tx.clone()).await?;
-        self.update_homeautomation_hook(&hub, http_port, &serial)
-            .await?;
 
-        let mut client = Client::with_auto_id()?;
+        let client = Client::with_auto_id()?;
+
+        let state = Arc::new(Pv2MqttState {
+            hub: ArcSwap::new(Arc::new(FullyResolvedHub {
+                hub: hub.hub.clone(),
+                user_data,
+            })),
+            client: client.clone(),
+            serial: serial.clone(),
+            http_port,
+            discovery_prefix: self.discovery_prefix.clone(),
+        });
+
+        self.update_homeautomation_hook(&state).await?;
 
         client.set_username_and_password(mqtt_username.as_deref(), mqtt_password.as_deref())?;
         client
@@ -548,14 +567,36 @@ impl ServeMqttCommand {
             .with_context(|| format!("connecting to mqtt broker {mqtt_host}:{mqtt_port}"))?;
         let subscriber = client.subscriber().expect("to own the subscriber");
 
-        client
-            .subscribe(
-                &format!("{}/status", self.discovery_prefix),
-                QoS::AtMostOnce,
+        let mut router: MqttRouter<Arc<Pv2MqttState>> = MqttRouter::new(client.clone());
+
+        router
+            .route(
+                format!("{}/status", self.discovery_prefix),
+                mqtt_homeassitant_status,
             )
             .await?;
 
-        self.register_with_hass(&hub, &mut client).await?;
+        router
+            .route(
+                format!("{MODEL}/scene/:serial/:scene_id/set"),
+                mqtt_scene_activate,
+            )
+            .await?;
+
+        router
+            .route(
+                format!("{MODEL}/shade/:serial/:shade_id/set_position"),
+                mqtt_shade_set_position,
+            )
+            .await?;
+        router
+            .route(
+                format!("{MODEL}/shade/:serial/:shade_id/command"),
+                mqtt_shade_command,
+            )
+            .await?;
+
+        Self::register_with_hass(&state).await?;
 
         {
             let tx = tx.clone();
@@ -603,111 +644,24 @@ impl ServeMqttCommand {
             }
         });
 
-        self.serve(hub, &serial, client, rx, http_port).await;
+        self.serve(rx, state, router).await;
         Ok(())
     }
 
     async fn handle_mqtt_message(
         &self,
         msg: Message,
-        actual_serial: &str,
-        hub: &Hub,
-        client: &mut Client,
+        state: &Arc<Pv2MqttState>,
+        router: &MqttRouter<Arc<Pv2MqttState>>,
     ) -> anyhow::Result<()> {
         log::debug!("msg: {msg:?}");
-
-        if msg.topic == format!("{}/status", self.discovery_prefix) {
-            return self.register_with_hass(hub, client).await;
-        }
-
-        let topic: Vec<_> = msg.topic.split('/').collect();
-        if let [_, device_kind, serial, target_id, kind] = topic.as_slice() {
-            if *serial != actual_serial {
-                log::trace!(
-                    "ignoring {topic:?} which is intended for \
-                    serial={serial}, while we are serial {actual_serial}"
-                );
-                return Ok(());
-            }
-
-            match *device_kind {
-                "shade" => {
-                    let shade_id = target_id;
-                    let (actual_shade_id, is_secondary) =
-                        if let Some(id) = shade_id.strip_suffix(SECONDARY_SUFFIX) {
-                            (id.parse::<i32>()?, true)
-                        } else {
-                            (shade_id.parse::<i32>()?, false)
-                        };
-
-                    let shade = hub.shade_by_id(actual_shade_id).await?;
-
-                    let payload = String::from_utf8_lossy(&msg.payload);
-                    log::debug!("{kind} Cover: {shade_id} 2nd={is_secondary}, payload={payload}");
-                    match kind.as_ref() {
-                        "set_position" => {
-                            let position: u8 = payload.parse()?;
-
-                            let mut shade_pos = shade.positions.clone().ok_or_else(|| {
-                                anyhow::anyhow!("shade {actual_shade_id} has no existing position")
-                            })?;
-
-                            let absolute = ShadePosition::percent_to_pos(position);
-
-                            if is_secondary {
-                                shade_pos.position_2.replace(absolute);
-                            } else {
-                                shade_pos.position_1 = absolute;
-                            }
-
-                            log::info!(
-                                "Set {shade_id} {} position to {position} ({shade_pos:?})",
-                                shade.name()
-                            );
-                            hub.change_shade_position(actual_shade_id, shade_pos.clone())
-                                .await?;
-                        }
-                        "command" => {
-                            log::info!("{payload} {shade_id} {}", shade.name());
-                            match payload.as_ref() {
-                                "OPEN" => {
-                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Up)
-                                        .await?;
-                                }
-                                "CLOSE" => {
-                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Down)
-                                        .await?;
-                                }
-                                "STOP" => {
-                                    hub.move_shade(actual_shade_id, ShadeUpdateMotion::Stop)
-                                        .await?;
-                                }
-                                _ => {}
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                "scene" => {
-                    let scene_id = target_id.parse()?;
-                    log::info!("SCENE {scene_id}");
-                    hub.activate_scene(scene_id).await?;
-                }
-                _ => {
-                    log::error!("device_kind {device_kind} not handled");
-                }
-            }
-        } else {
-            log::error!("topic {} not handled", msg.topic);
-        }
-        Ok(())
+        router.dispatch(msg, Arc::clone(state)).await
     }
 
     async fn handle_pv_event(
         &self,
-        serial: &str,
+        state: &Arc<Pv2MqttState>,
         item: HomeAutomationPostBackData,
-        client: &mut Client,
     ) -> anyhow::Result<()> {
         log::debug!("item: {item:#?}");
 
@@ -721,32 +675,31 @@ impl ServeMqttCommand {
         match item.record_type {
             HomeAutomationRecordType::Stops => {
                 if let Some(pct) = item.stopped_position {
-                    self.handle_position(client, serial, &shade_id, pct).await?;
+                    self.handle_position(state, &shade_id, pct).await?;
 
-                    let state = if pct == 0 { "closed" } else { "open" };
-                    self.advise_of_state_label(client, serial, &shade_id, state)
+                    let shade_state = if pct == 0 { "closed" } else { "open" };
+                    self.advise_of_state_label(state, &shade_id, shade_state)
                         .await?;
                 }
             }
             HomeAutomationRecordType::BeginsMoving => {
                 if let Some(pct) = item.current_position {
-                    self.handle_position(client, serial, &shade_id, pct).await?;
+                    self.handle_position(state, &shade_id, pct).await?;
                 }
             }
             HomeAutomationRecordType::StartsClosing => {
-                self.advise_of_state_label(client, serial, &shade_id, "closing")
+                self.advise_of_state_label(state, &shade_id, "closing")
                     .await?;
             }
             HomeAutomationRecordType::StartsOpening => {
-                self.advise_of_state_label(client, serial, &shade_id, "opening")
+                self.advise_of_state_label(state, &shade_id, "opening")
                     .await?;
             }
             HomeAutomationRecordType::HasOpened | HomeAutomationRecordType::HasFullyOpened => {
-                self.advise_of_state_label(client, serial, &shade_id, "open")
-                    .await?;
+                self.advise_of_state_label(state, &shade_id, "open").await?;
             }
             HomeAutomationRecordType::HasClosed | HomeAutomationRecordType::HasFullyClosed => {
-                self.advise_of_state_label(client, serial, &shade_id, "closed")
+                self.advise_of_state_label(state, &shade_id, "closed")
                     .await?;
             }
             HomeAutomationRecordType::TargetLevelChanged => {}
@@ -755,111 +708,431 @@ impl ServeMqttCommand {
         Ok(())
     }
 
-    async fn update_homeautomation_hook(
-        &self,
-        hub: &Hub,
-        http_port: u16,
-        serial: &str,
-    ) -> anyhow::Result<()> {
-        let addr = hub.suggest_bind_address().await?;
-        hub.enable_home_automation_hook(&format!("{addr}:{http_port}/pv-postback/{serial}"))
+    async fn update_homeautomation_hook(&self, state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
+        let hub = state.hub.load();
+
+        let addr = hub.hub.suggest_bind_address().await?;
+        hub.hub
+            .enable_home_automation_hook(&format!(
+                "{addr}:{http_port}/pv-postback/{serial}",
+                http_port = state.http_port,
+                serial = state.serial
+            ))
             .await?;
         Ok(())
     }
 
     async fn handle_discovery(
         &self,
-        actual_serial: &str,
-        new_hub: ResolvedHub,
-        hub: &mut ResolvedHub,
-        client: &mut Client,
-        http_port: u16,
+        state: &Arc<Pv2MqttState>,
+        mut new_hub: ResolvedHub,
     ) -> anyhow::Result<()> {
-        match &new_hub.user_data {
-            Some(ud) => {
-                if ud.serial_number != actual_serial {
+        let hub = state.hub.load();
+        match new_hub.user_data.take() {
+            Some(user_data) => {
+                if user_data.serial_number != state.serial {
                     // It's a different hub
                     return Ok(());
                 }
-                match &hub.user_data {
-                    Some(eud) => {
-                        let changed = ud.ip != eud.ip || ud.hub_name != eud.hub_name;
-                        if !changed {
-                            return Ok(());
-                        }
-                    }
-                    None => {
-                        // Hub wasn't responding, but is now
-                    }
+                let changed = user_data.ip != hub.user_data.ip
+                    || user_data.hub_name != hub.user_data.hub_name;
+                if !changed {
+                    return Ok(());
                 }
+
+                log::info!("Hub ip, name or connectivity status changed");
+
+                state.hub.store(Arc::new(FullyResolvedHub {
+                    hub: hub.hub.clone(),
+                    user_data,
+                }));
+                self.update_homeautomation_hook(state).await?;
+                Self::register_with_hass(&state).await?;
+                Ok(())
             }
             None => {
                 // Hub isn't responding. Do something to update an entity
                 // in hass so that this is visible
-                return Ok(());
+                Ok(())
             }
         }
-        log::info!("Hub ip, name or connectivity status changed");
-
-        *hub = new_hub;
-        self.update_homeautomation_hook(hub, http_port, actual_serial)
-            .await?;
-        self.register_with_hass(hub, client).await?;
-        Ok(())
     }
 
     async fn serve(
         &self,
-        mut hub: ResolvedHub,
-        actual_serial: &str,
-        mut client: Client,
         mut rx: Receiver<ServerEvent>,
-        http_port: u16,
+        state: Arc<Pv2MqttState>,
+        router: MqttRouter<Arc<Pv2MqttState>>,
     ) {
         log::info!("Waiting for mqtt and pv messages");
         while let Some(msg) = rx.recv().await {
             match msg {
                 ServerEvent::MqttMessage(msg) => {
-                    if let Err(err) = self
-                        .handle_mqtt_message(msg, actual_serial, &hub, &mut client)
-                        .await
-                    {
+                    if let Err(err) = self.handle_mqtt_message(msg, &state, &router).await {
                         log::error!("handling mqtt message: {err:#}");
                     }
                 }
                 ServerEvent::HomeAutomationData { serial, mut data } => {
+                    if serial != state.serial {
+                        log::warn!(
+                            "ignoring postback which is intended for \
+                             serial={serial}, while we are serial {actual_serial}",
+                            actual_serial = state.serial
+                        );
+                        continue;
+                    }
+
                     // Re-order the events so that the closed/open events happen
                     // after closing/opening
                     data.sort_by(|a, b| a.record_type.cmp(&b.record_type));
 
                     for item in data {
-                        if let Err(err) = self.handle_pv_event(&serial, item, &mut client).await {
+                        if let Err(err) = self.handle_pv_event(&state, item).await {
                             log::error!("handling pv event: {err:#}");
                         }
                     }
                 }
 
                 ServerEvent::HubDiscovered(resolved_hub) => {
-                    if let Err(err) = self
-                        .handle_discovery(
-                            actual_serial,
-                            resolved_hub,
-                            &mut hub,
-                            &mut client,
-                            http_port,
-                        )
-                        .await
-                    {
+                    if let Err(err) = self.handle_discovery(&state, resolved_hub).await {
                         log::error!("While updating hass state: {err:#?}");
                     }
                 }
 
                 ServerEvent::PeriodicStateUpdate => {
-                    if let Err(err) = self.register_with_hass(&mut hub, &mut client).await {
+                    if let Err(err) = Self::register_with_hass(&state).await {
                         log::error!("While updating hass state: {err:#?}");
                     }
                 }
             }
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct SerialAndScene {
+    serial: String,
+    #[serde(deserialize_with = "parse_deser")]
+    scene_id: i32,
+}
+
+async fn mqtt_scene_activate(
+    SerialAndScene { serial, scene_id }: SerialAndScene,
+    msg: Message,
+    state: Arc<Pv2MqttState>,
+) -> anyhow::Result<()> {
+    if serial != state.serial {
+        log::warn!(
+            "ignoring {topic} which is intended for \
+                    serial={serial}, while we are serial {actual_serial}",
+            topic = msg.topic,
+            actual_serial = state.serial
+        );
+        return Ok(());
+    }
+
+    state.hub.load().hub.activate_scene(scene_id).await?;
+    Ok(())
+}
+
+struct ShadeIdAddr {
+    shade_id: i32,
+    is_secondary: bool,
+}
+
+impl FromStr for ShadeIdAddr {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> anyhow::Result<ShadeIdAddr> {
+        let (shade_id, is_secondary) = if let Some(id) = s.strip_suffix(SECONDARY_SUFFIX) {
+            (id.parse::<i32>()?, true)
+        } else {
+            (s.parse::<i32>()?, false)
+        };
+        Ok(ShadeIdAddr {
+            shade_id,
+            is_secondary,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct SerialAndShade {
+    serial: String,
+    #[serde(deserialize_with = "parse_deser")]
+    shade_id: ShadeIdAddr,
+}
+async fn mqtt_shade_set_position(
+    params: SerialAndShade,
+    msg: Message,
+    state: Arc<Pv2MqttState>,
+) -> anyhow::Result<()> {
+    let SerialAndShade {
+        serial,
+        shade_id: ShadeIdAddr {
+            shade_id,
+            is_secondary,
+        },
+    } = params;
+
+    if serial != state.serial {
+        log::warn!(
+            "ignoring {topic} which is intended for \
+                    serial={serial}, while we are serial {actual_serial}",
+            topic = msg.topic,
+            actual_serial = state.serial
+        );
+        return Ok(());
+    }
+
+    let payload = String::from_utf8_lossy(&msg.payload);
+
+    let position: u8 = payload.parse()?;
+
+    let hub = state.hub.load();
+    let shade = hub.hub.shade_by_id(shade_id).await?;
+
+    let mut shade_pos = shade
+        .positions
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("shade {shade_id} has no existing position"))?;
+
+    let absolute = ShadePosition::percent_to_pos(position);
+
+    if is_secondary {
+        shade_pos.position_2.replace(absolute);
+    } else {
+        shade_pos.position_1 = absolute;
+    }
+
+    log::info!(
+        "Set {shade_id} {} position to {position} ({shade_pos:?})",
+        shade.name()
+    );
+    hub.hub
+        .change_shade_position(shade_id, shade_pos.clone())
+        .await?;
+
+    Ok(())
+}
+
+async fn mqtt_shade_command(
+    params: SerialAndShade,
+    msg: Message,
+    state: Arc<Pv2MqttState>,
+) -> anyhow::Result<()> {
+    let SerialAndShade {
+        serial,
+        shade_id: ShadeIdAddr {
+            shade_id,
+            is_secondary: _,
+        },
+    } = params;
+
+    if serial != state.serial {
+        log::warn!(
+            "ignoring {topic} which is intended for \
+                    serial={serial}, while we are serial {actual_serial}",
+            topic = msg.topic,
+            actual_serial = state.serial
+        );
+        return Ok(());
+    }
+
+    let command = String::from_utf8_lossy(&msg.payload);
+    let hub = state.hub.load();
+    let shade = hub.hub.shade_by_id(shade_id).await?;
+
+    log::info!("{command} {shade_id} {}", shade.name());
+    match command.as_ref() {
+        "OPEN" => {
+            hub.hub.move_shade(shade_id, ShadeUpdateMotion::Up).await?;
+        }
+        "CLOSE" => {
+            hub.hub
+                .move_shade(shade_id, ShadeUpdateMotion::Down)
+                .await?;
+        }
+        "STOP" => {
+            hub.hub
+                .move_shade(shade_id, ShadeUpdateMotion::Stop)
+                .await?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+async fn mqtt_homeassitant_status(
+    _: (),
+    _: Message,
+    state: Arc<Pv2MqttState>,
+) -> anyhow::Result<()> {
+    ServeMqttCommand::register_with_hass(&state).await
+}
+
+type MqttHandlerResult = anyhow::Result<()>;
+
+struct FullyResolvedHub {
+    hub: Hub,
+    user_data: UserData,
+}
+
+struct Pv2MqttState {
+    hub: ArcSwap<FullyResolvedHub>,
+    client: Client,
+    serial: String,
+    http_port: u16,
+    discovery_prefix: String,
+}
+
+struct Dispatcher<S = ()>
+where
+    S: Clone,
+{
+    func: Box<dyn Fn(JsonValue, Message, S) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>>,
+}
+
+impl<S: Clone + 'static> Dispatcher<S> {
+    pub async fn call(&self, params: JsonValue, message: Message, s: S) -> MqttHandlerResult {
+        (self.func)(params, message, s).await
+    }
+
+    pub fn new<F, Fut, T>(func: F) -> Self
+    where
+        F: (Fn(T, Message, S) -> Fut) + Clone + 'static,
+        Fut: Future<Output = MqttHandlerResult>,
+        T: DeserializeOwned,
+    {
+        let wrap: Box<
+            dyn Fn(JsonValue, Message, S) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>,
+        > = Box::new(move |params: JsonValue, message: Message, state: S| {
+            let func = func.clone();
+            Box::pin(async move {
+                let parsed: T = serde_json::from_value(params)?;
+                func(parsed, message, state).await
+            })
+        });
+
+        Self { func: wrap }
+    }
+}
+
+struct MqttRouter<S>
+where
+    S: Clone,
+{
+    router: Router<Dispatcher<S>>,
+    client: Client,
+}
+
+impl<S: Clone + 'static> MqttRouter<S> {
+    pub fn new(client: Client) -> Self {
+        Self {
+            router: Router::new(),
+            client,
+        }
+    }
+
+    pub async fn route<'a, P, T, F, Fut>(&mut self, path: P, handler: F) -> anyhow::Result<()>
+    where
+        P: Into<String>,
+        F: (Fn(T, Message, S) -> Fut) + Clone + 'static,
+        Fut: Future<Output = MqttHandlerResult>,
+        T: DeserializeOwned,
+    {
+        let path = path.into();
+        self.client
+            .subscribe(&route_to_topic(&path), QoS::AtMostOnce)
+            .await?;
+        self.router.insert(path, Dispatcher::new(handler))?;
+        Ok(())
+    }
+
+    pub async fn dispatch(&self, message: Message, state: S) -> anyhow::Result<()> {
+        let topic = message.topic.to_string();
+        let matched = self.router.at(&topic)?;
+
+        let params = {
+            let mut value_map = serde_json::Map::new();
+
+            for (k, v) in matched.params.iter() {
+                value_map.insert(k.into(), v.into());
+            }
+
+            if value_map.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Object(value_map)
+            }
+        };
+
+        matched.value.call(params, message, state).await
+    }
+}
+
+pub fn parse_deser<'de, D, T: FromStr>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    <T as FromStr>::Err: std::fmt::Display,
+{
+    use serde::de::Error;
+    let s = String::deserialize(d)?;
+    s.parse::<T>()
+        .map_err(|err| D::Error::custom(format!("parsing {s}: {err:#}")))
+}
+
+fn route_to_topic(route: &str) -> String {
+    let mut result = String::new();
+    let mut in_param = false;
+    for c in route.chars() {
+        if c == ':' {
+            in_param = true;
+            result.push('+');
+            continue;
+        }
+        if c == '/' {
+            in_param = false;
+        }
+        if in_param {
+            continue;
+        }
+        result.push(c)
+    }
+    result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_route_to_topic() {
+        for (route, expected_topic) in [
+            ("hello/:there", "hello/+"),
+            ("a/:b/foo", "a/+/foo"),
+            ("hello", "hello"),
+            ("who:", "who+"),
+        ] {
+            let topic = route_to_topic(route);
+            assert_eq!(
+                topic, expected_topic,
+                "route={route}, expected={expected_topic} actual={topic}"
+            );
+        }
+    }
+
+    #[test]
+    fn routing() -> anyhow::Result<()> {
+        let mut router = Router::new();
+        router.insert("pv2mqtt/home", "Welcome!")?;
+        router.insert("pv2mqtt/users/:name/:id", "A User")?;
+
+        let matched = router.at("pv2mqtt/users/foo/978")?;
+        assert_eq!(matched.params.get("id"), Some("978"));
+        assert_eq!(*matched.value, "A User");
+
+        Ok(())
     }
 }
