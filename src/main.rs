@@ -10,10 +10,12 @@ mod discovery;
 mod http_helpers;
 mod hub;
 mod mqtt_helper;
+mod version_info;
 
 use crate::hub::*;
 
 #[derive(Parser, Debug)]
+#[command(version = version_info::pview_version())]
 pub struct Args {
     #[command(subcommand)]
     cmd: SubCommand,

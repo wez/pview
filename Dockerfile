@@ -3,7 +3,7 @@
 ####################################################################################################
 FROM alpine:latest AS builder
 
-RUN apk --no-cache add rust cargo g++ openssl openssl-dev
+RUN apk --no-cache add rust cargo g++ openssl openssl-dev git
 ENV OPENSSL_STATIC=yes \
     PKG_CONFIG_ALLOW_CROSS=true \
     PKG_CONFIG_ALL_STATIC=true \

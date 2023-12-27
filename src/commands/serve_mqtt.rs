@@ -6,6 +6,7 @@ use crate::discovery::ResolvedHub;
 use crate::hub::Hub;
 use crate::mqtt_helper::*;
 use crate::opt_env_var;
+use crate::version_info::pview_version;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use axum::extract::Path;
@@ -171,11 +172,12 @@ async fn register_diagnostic_entity(
             "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
             "manufacturer": "Wez Furlong",
             "model": MODEL,
+            "sw_version": pview_version(),
         },
         "entity_category": "diagnostic",
         "origin": {
             "name": MODEL,
-            "sw": "0.0",
+            "sw_version": pview_version(),
             "url": "https://github.com/wez/pview",
         },
     });
@@ -325,7 +327,7 @@ async fn register_shades(
                 },
                 "origin": {
                     "name": MODEL,
-                    "sw": "0.0",
+                    "sw_version": pview_version(),
                     "url": "https://github.com/wez/pview",
                 },
             });
@@ -826,7 +828,10 @@ impl ServeMqttCommand {
         state: Arc<Pv2MqttState>,
         router: MqttRouter<Arc<Pv2MqttState>>,
     ) {
-        log::info!("Waiting for mqtt and pv messages");
+        log::info!(
+            "Version {}. Waiting for mqtt and pv messages",
+            pview_version()
+        );
         while let Some(msg) = rx.recv().await {
             match msg {
                 ServerEvent::MqttMessage(msg) => {
