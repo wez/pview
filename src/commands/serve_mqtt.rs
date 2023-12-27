@@ -395,50 +395,48 @@ async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn advise_hass_of_state_label(
+    state: &Arc<Pv2MqttState>,
+    shade_id: &str,
+    shade_state: &str,
+) -> anyhow::Result<()> {
+    state
+        .client
+        .publish(
+            &format!(
+                "{MODEL}/shade/{serial}/{shade_id}/state",
+                serial = state.serial
+            ),
+            &shade_state.as_bytes(),
+            QoS::AtMostOnce,
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
+async fn advise_hass_of_position(
+    state: &Arc<Pv2MqttState>,
+    shade_id: &str,
+    position: u8,
+) -> anyhow::Result<()> {
+    state
+        .client
+        .publish(
+            &format!(
+                "{MODEL}/shade/{serial}/{shade_id}/position",
+                serial = state.serial
+            ),
+            &format!("{position}").as_bytes(),
+            QoS::AtMostOnce,
+            false,
+        )
+        .await?;
+
+    Ok(())
+}
+
 impl ServeMqttCommand {
-    async fn advise_of_state_label(
-        &self,
-        state: &Arc<Pv2MqttState>,
-        shade_id: &str,
-        shade_state: &str,
-    ) -> anyhow::Result<()> {
-        state
-            .client
-            .publish(
-                &format!(
-                    "{MODEL}/shade/{serial}/{shade_id}/state",
-                    serial = state.serial
-                ),
-                &shade_state.as_bytes(),
-                QoS::AtMostOnce,
-                false,
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn handle_position(
-        &self,
-        state: &Arc<Pv2MqttState>,
-        shade_id: &str,
-        position: u8,
-    ) -> anyhow::Result<()> {
-        state
-            .client
-            .publish(
-                &format!(
-                    "{MODEL}/shade/{serial}/{shade_id}/position",
-                    serial = state.serial
-                ),
-                &format!("{position}").as_bytes(),
-                QoS::AtMostOnce,
-                false,
-            )
-            .await?;
-
-        Ok(())
-    }
-
     async fn setup_http_server(&self, tx: Sender<ServerEvent>) -> anyhow::Result<u16> {
         // Figure out our local ip when talking to the hub
         use axum::extract::State;
@@ -674,32 +672,28 @@ impl ServeMqttCommand {
         match item.record_type {
             HomeAutomationRecordType::Stops => {
                 if let Some(pct) = item.stopped_position {
-                    self.handle_position(state, &shade_id, pct).await?;
+                    advise_hass_of_position(state, &shade_id, pct).await?;
 
                     let shade_state = if pct == 0 { "closed" } else { "open" };
-                    self.advise_of_state_label(state, &shade_id, shade_state)
-                        .await?;
+                    advise_hass_of_state_label(state, &shade_id, shade_state).await?;
                 }
             }
             HomeAutomationRecordType::BeginsMoving => {
                 if let Some(pct) = item.current_position {
-                    self.handle_position(state, &shade_id, pct).await?;
+                    advise_hass_of_position(state, &shade_id, pct).await?;
                 }
             }
             HomeAutomationRecordType::StartsClosing => {
-                self.advise_of_state_label(state, &shade_id, "closing")
-                    .await?;
+                advise_hass_of_state_label(state, &shade_id, "closing").await?;
             }
             HomeAutomationRecordType::StartsOpening => {
-                self.advise_of_state_label(state, &shade_id, "opening")
-                    .await?;
+                advise_hass_of_state_label(state, &shade_id, "opening").await?;
             }
             HomeAutomationRecordType::HasOpened | HomeAutomationRecordType::HasFullyOpened => {
-                self.advise_of_state_label(state, &shade_id, "open").await?;
+                advise_hass_of_state_label(state, &shade_id, "open").await?;
             }
             HomeAutomationRecordType::HasClosed | HomeAutomationRecordType::HasFullyClosed => {
-                self.advise_of_state_label(state, &shade_id, "closed")
-                    .await?;
+                advise_hass_of_state_label(state, &shade_id, "closed").await?;
             }
             HomeAutomationRecordType::TargetLevelChanged => {}
             HomeAutomationRecordType::LevelChanged => {}
