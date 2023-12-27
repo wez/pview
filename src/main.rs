@@ -143,10 +143,18 @@ async fn main() -> anyhow::Result<()> {
     if let Ok(path) = dotenvy::dotenv() {
         eprintln!("Loading environment overrides from {path:?}");
     }
+
+    let tz: chrono_tz::Tz = std::env::var("TZ")
+        .ok()
+        .and_then(|name| name.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+    let utc_suffix = if tz == chrono_tz::UTC { "Z" } else { "" };
+
     env_logger::builder()
         // A bit of boilerplate here to get timestamps printed in local time.
         // <https://github.com/rust-cli/env_logger/issues/158>
-        .format(|buf, record| {
+        .format(move |buf, record| {
+            use chrono::Utc;
             use env_logger::fmt::Color;
             use std::io::Write;
 
@@ -156,7 +164,11 @@ async fn main() -> anyhow::Result<()> {
                 .set_intense(true)
                 .clone();
             write!(buf, "{}", subtle.value("["))?;
-            write!(buf, "{} ", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"))?;
+            write!(
+                buf,
+                "{}{utc_suffix} ",
+                Utc::now().with_timezone(&tz).format("%Y-%m-%dT%H:%M:%S")
+            )?;
             write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
             if let Some(path) = record.module_path() {
                 write!(buf, " {}", path)?;
