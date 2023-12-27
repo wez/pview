@@ -106,8 +106,7 @@ impl HassRegistration {
 
     pub fn delete<T: Into<String>>(&mut self, topic: T) {
         if self.deletes.is_empty() {
-            self.deletes
-                .push(RegEntry::Delay(Duration::from_secs(4)));
+            self.deletes.push(RegEntry::Delay(Duration::from_secs(4)));
         }
         self.deletes.push(RegEntry::msg(topic, ""));
     }
@@ -144,17 +143,26 @@ impl HassRegistration {
     }
 }
 
-async fn register_hub(
+struct DiagnosticEntity {
+    name: String,
+    unique_id: String,
+    value: String,
+}
+
+async fn register_diagnostic_entity(
+    diagnostic: DiagnosticEntity,
     user_data: &UserData,
     state: &Arc<Pv2MqttState>,
     reg: &mut HassRegistration,
 ) -> anyhow::Result<()> {
     let serial = &user_data.serial_number;
+    let unique_id = &diagnostic.unique_id;
+
     let data = serde_json::json!({
-        "name": "IP Address",
-        "unique_id": format!("{serial}-hub-ip"),
-        "state_topic": format!("{MODEL}/sensor/{serial}-hub-ip/state"),
-        "availability_topic": format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
+        "name": diagnostic.name,
+        "unique_id": unique_id,
+        "state_topic": format!("{MODEL}/sensor/{unique_id}/state"),
+        "availability_topic": format!("{MODEL}/sensor/{unique_id}/availability"),
         "device": {
             "identifiers": [
                 format!("{MODEL}-{serial}"),
@@ -177,19 +185,66 @@ async fn register_hub(
     });
 
     reg.config(
-        format!("{}/sensor/{serial}-hub-ip/config", state.discovery_prefix),
+        format!("{}/sensor/{unique_id}/config", state.discovery_prefix),
         serde_json::to_string(&data)?,
     );
 
-    reg.update(
-        format!("{MODEL}/sensor/{serial}-hub-ip/availability"),
-        "online",
-    );
+    reg.update(format!("{MODEL}/sensor/{unique_id}/availability"), "online");
 
     reg.update(
-        format!("{MODEL}/sensor/{serial}-hub-ip/state"),
-        user_data.ip.clone(),
+        format!("{MODEL}/sensor/{unique_id}/state"),
+        diagnostic.value,
     );
+
+    Ok(())
+}
+
+async fn register_hub(
+    user_data: &UserData,
+    state: &Arc<Pv2MqttState>,
+    reg: &mut HassRegistration,
+) -> anyhow::Result<()> {
+    let serial = &user_data.serial_number;
+    register_diagnostic_entity(
+        DiagnosticEntity {
+            name: "IP Address".to_string(),
+            unique_id: format!("{serial}-hub-ip"),
+            value: user_data.ip.clone(),
+        },
+        user_data,
+        state,
+        reg,
+    )
+    .await?;
+
+    register_diagnostic_entity(
+        DiagnosticEntity {
+            name: "Status".to_string(),
+            unique_id: format!("{serial}-responding"),
+            value: if state.responding.load(Ordering::SeqCst) {
+                "OK"
+            } else {
+                "UNRESPONSIVE"
+            }
+            .to_string(),
+        },
+        user_data,
+        state,
+        reg,
+    )
+    .await?;
+
+    register_diagnostic_entity(
+        DiagnosticEntity {
+            name: "rfStatus".to_string(),
+            unique_id: format!("{serial}-rfStatus"),
+            value: user_data.rf_status.to_string(),
+        },
+        user_data,
+        state,
+        reg,
+    )
+    .await?;
 
     Ok(())
 }
@@ -395,6 +450,19 @@ async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn advise_hass_of_unresponsive(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
+    state
+        .client
+        .publish(
+            format!("{MODEL}/shade/{}-responding/state", state.serial),
+            "UNRESPONSIVE",
+            QoS::AtMostOnce,
+            false,
+        )
+        .await?;
+    Ok(())
+}
+
 async fn advise_hass_of_state_label(
     state: &Arc<Pv2MqttState>,
     shade_id: &str,
@@ -548,6 +616,7 @@ impl ServeMqttCommand {
             http_port,
             discovery_prefix: self.discovery_prefix.clone(),
             first_run: AtomicBool::new(true),
+            responding: AtomicBool::new(true),
         });
 
         self.update_homeautomation_hook(&state).await?;
@@ -727,7 +796,8 @@ impl ServeMqttCommand {
                     // It's a different hub
                     return Ok(());
                 }
-                let changed = user_data.ip != hub.user_data.ip
+                let changed = !state.responding.load(Ordering::SeqCst)
+                    || user_data.ip != hub.user_data.ip
                     || user_data.hub_name != hub.user_data.hub_name;
                 if !changed {
                     return Ok(());
@@ -735,6 +805,7 @@ impl ServeMqttCommand {
 
                 log::info!("Hub ip, name or connectivity status changed");
 
+                state.responding.store(true, Ordering::SeqCst);
                 state.hub.store(Arc::new(FullyResolvedHub {
                     hub: hub.hub.clone(),
                     user_data,
@@ -746,6 +817,8 @@ impl ServeMqttCommand {
             None => {
                 // Hub isn't responding. Do something to update an entity
                 // in hass so that this is visible
+                state.responding.store(false, Ordering::SeqCst);
+                advise_hass_of_unresponsive(state).await?;
                 Ok(())
             }
         }
@@ -979,6 +1052,7 @@ struct Pv2MqttState {
     http_port: u16,
     discovery_prefix: String,
     first_run: AtomicBool,
+    responding: AtomicBool,
 }
 
 /// A helper struct to type-erase handler functions for the router
