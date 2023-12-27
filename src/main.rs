@@ -144,6 +144,26 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Loading environment overrides from {path:?}");
     }
     env_logger::builder()
+        // A bit of boilerplate here to get timestamps printed in local time.
+        // <https://github.com/rust-cli/env_logger/issues/158>
+        .format(|buf, record| {
+            use env_logger::fmt::Color;
+            use std::io::Write;
+
+            let subtle = buf
+                .style()
+                .set_color(Color::Black)
+                .set_intense(true)
+                .clone();
+            write!(buf, "{}", subtle.value("["))?;
+            write!(buf, "{} ", chrono::Local::now().format("%Y-%m-%dT%H:%M:%S"))?;
+            write!(buf, "{:<5}", buf.default_styled_level(record.level()))?;
+            if let Some(path) = record.module_path() {
+                write!(buf, " {}", path)?;
+            }
+            write!(buf, "{}", subtle.value("]"))?;
+            writeln!(buf, " {}", record.args())
+        })
         .filter_level(log::LevelFilter::Info)
         .parse_env("RUST_LOG")
         .init();
