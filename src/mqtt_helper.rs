@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use matchit::Router;
 use mosquitto_rs::{Client, Message, QoS};
 use serde::de::DeserializeOwned;
@@ -9,36 +10,199 @@ use std::str::FromStr;
 
 pub type MqttHandlerResult = anyhow::Result<()>;
 
-/// A helper struct to type-erase handler functions for the router
-struct Dispatcher<S = ()>
+pub struct Request<S> {
+    params: JsonValue,
+    message: Message,
+    state: S,
+}
+
+pub trait FromRequest<S>: Sized {
+    fn from_request(request: &Request<S>) -> anyhow::Result<Self>;
+}
+
+pub struct Topic(pub String);
+impl<S> FromRequest<S> for Topic {
+    fn from_request(request: &Request<S>) -> anyhow::Result<Self> {
+        Ok(Self(request.message.topic.clone()))
+    }
+}
+
+pub struct Payload<T>(pub T);
+impl<S, T> FromRequest<S> for Payload<T>
+where
+    T: FromStr,
+    <T as FromStr>::Err: std::fmt::Debug,
+{
+    fn from_request(request: &Request<S>) -> anyhow::Result<Payload<T>> {
+        let s = std::str::from_utf8(&request.message.payload)
+            .map_err(|err| anyhow!("payload is not utf8: {err:#?}"))?;
+        let result: T = s
+            .parse()
+            .map_err(|err| anyhow!("failed to parse payload {s}: {err:#?}"))?;
+        Ok(Self(result))
+    }
+}
+
+pub struct Params<T>(pub T);
+impl<S, T> FromRequest<S> for Params<T>
+where
+    T: DeserializeOwned,
+{
+    fn from_request(request: &Request<S>) -> anyhow::Result<Params<T>> {
+        let parsed: T = serde_json::from_value(request.params.clone())?;
+        Ok(Self(parsed))
+    }
+}
+
+pub struct State<S>(pub S);
+impl<S> FromRequest<S> for State<S>
 where
     S: Clone,
 {
-    func: Box<dyn Fn(JsonValue, Message, S) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>>,
+    fn from_request(request: &Request<S>) -> anyhow::Result<State<S>> {
+        Ok(Self(request.state.clone()))
+    }
+}
+
+/// A helper struct to type-erase handler functions for the router
+pub struct Dispatcher<S = ()>
+where
+    S: Clone,
+{
+    func: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>>,
 }
 
 impl<S: Clone + 'static> Dispatcher<S> {
-    pub async fn call(&self, params: JsonValue, message: Message, s: S) -> MqttHandlerResult {
-        (self.func)(params, message, s).await
+    pub async fn call(&self, params: JsonValue, message: Message, state: S) -> MqttHandlerResult {
+        (self.func)(Request {
+            params,
+            message,
+            state,
+        })
+        .await
     }
 
-    pub fn new<F, Fut, T>(func: F) -> Self
-    where
-        F: (Fn(T, Message, S) -> Fut) + Clone + 'static,
-        Fut: Future<Output = MqttHandlerResult>,
-        T: DeserializeOwned,
-    {
-        let wrap: Box<
-            dyn Fn(JsonValue, Message, S) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>,
-        > = Box::new(move |params: JsonValue, message: Message, state: S| {
-            let func = func.clone();
-            Box::pin(async move {
-                let parsed: T = serde_json::from_value(params)?;
-                func(parsed, message, state).await
-            })
-        });
+    pub fn new(
+        func: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>>,
+    ) -> Self {
+        Self { func }
+    }
+}
 
-        Self { func: wrap }
+pub trait MakeDispatcher<T, S: Clone> {
+    fn make_dispatcher(func: Self) -> Dispatcher<S>;
+}
+
+impl<F, S, Fut> MakeDispatcher<(), S> for F
+where
+    F: (Fn() -> Fut) + Clone + 'static,
+    Fut: Future<Output = MqttHandlerResult>,
+    S: Clone + 'static,
+{
+    fn make_dispatcher(func: F) -> Dispatcher<S> {
+        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
+            Box::new(move |_request: Request<S>| {
+                let func = func.clone();
+                Box::pin(async move { func().await })
+            });
+
+        Dispatcher::new(wrap)
+    }
+}
+
+impl<F, S, Fut, P1> MakeDispatcher<(P1,), S> for F
+where
+    F: (Fn(P1) -> Fut) + Clone + 'static,
+    Fut: Future<Output = MqttHandlerResult>,
+    S: Clone + 'static,
+    P1: FromRequest<S>,
+{
+    fn make_dispatcher(func: F) -> Dispatcher<S> {
+        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
+            Box::new(move |request: Request<S>| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let p1 = P1::from_request(&request)?;
+                    func(p1).await
+                })
+            });
+
+        Dispatcher::new(wrap)
+    }
+}
+
+impl<F, S, Fut, P1, P2> MakeDispatcher<(P1, P2), S> for F
+where
+    F: (Fn(P1, P2) -> Fut) + Clone + 'static,
+    Fut: Future<Output = MqttHandlerResult>,
+    S: Clone + 'static,
+    P1: FromRequest<S>,
+    P2: FromRequest<S>,
+{
+    fn make_dispatcher(func: F) -> Dispatcher<S> {
+        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
+            Box::new(move |request: Request<S>| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let p1 = P1::from_request(&request)?;
+                    let p2 = P2::from_request(&request)?;
+                    func(p1, p2).await
+                })
+            });
+
+        Dispatcher::new(wrap)
+    }
+}
+
+impl<F, S, Fut, P1, P2, P3> MakeDispatcher<(P1, P2, P3), S> for F
+where
+    F: (Fn(P1, P2, P3) -> Fut) + Clone + 'static,
+    Fut: Future<Output = MqttHandlerResult>,
+    S: Clone + 'static,
+    P1: FromRequest<S>,
+    P2: FromRequest<S>,
+    P3: FromRequest<S>,
+{
+    fn make_dispatcher(func: F) -> Dispatcher<S> {
+        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
+            Box::new(move |request: Request<S>| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let p1 = P1::from_request(&request)?;
+                    let p2 = P2::from_request(&request)?;
+                    let p3 = P3::from_request(&request)?;
+                    func(p1, p2, p3).await
+                })
+            });
+
+        Dispatcher::new(wrap)
+    }
+}
+
+impl<F, S, Fut, P1, P2, P3, P4> MakeDispatcher<(P1, P2, P3, P4), S> for F
+where
+    F: (Fn(P1, P2, P3, P4) -> Fut) + Clone + 'static,
+    Fut: Future<Output = MqttHandlerResult>,
+    S: Clone + 'static,
+    P1: FromRequest<S>,
+    P2: FromRequest<S>,
+    P3: FromRequest<S>,
+    P4: FromRequest<S>,
+{
+    fn make_dispatcher(func: F) -> Dispatcher<S> {
+        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
+            Box::new(move |request: Request<S>| {
+                let func = func.clone();
+                Box::pin(async move {
+                    let p1 = P1::from_request(&request)?;
+                    let p2 = P2::from_request(&request)?;
+                    let p3 = P3::from_request(&request)?;
+                    let p4 = P4::from_request(&request)?;
+                    func(p1, p2, p3, p4).await
+                })
+            });
+
+        Dispatcher::new(wrap)
     }
 }
 
@@ -64,18 +228,17 @@ impl<S: Clone + 'static> MqttRouter<S> {
     /// a parameter map like `{"bar": "hello"}`.
     /// That parameter map will then be deserialized into type `T` and passed as the
     /// first parameter of the handler function that is also passsed into `route`.
-    pub async fn route<'a, P, T, F, Fut>(&mut self, path: P, handler: F) -> anyhow::Result<()>
+    pub async fn route<'a, P, T, F>(&mut self, path: P, handler: F) -> anyhow::Result<()>
     where
         P: Into<String>,
-        F: (Fn(T, Message, S) -> Fut) + Clone + 'static,
-        Fut: Future<Output = MqttHandlerResult>,
-        T: DeserializeOwned,
+        F: MakeDispatcher<T, S>,
     {
         let path = path.into();
         self.client
             .subscribe(&route_to_topic(&path), QoS::AtMostOnce)
             .await?;
-        self.router.insert(path, Dispatcher::new(handler))?;
+        let dispatcher = F::make_dispatcher(handler);
+        self.router.insert(path, dispatcher)?;
         Ok(())
     }
 

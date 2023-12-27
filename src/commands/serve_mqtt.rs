@@ -4,7 +4,7 @@ use crate::api_types::{
 };
 use crate::discovery::ResolvedHub;
 use crate::hub::Hub;
-use crate::mqtt_helper::{parse_deser, MqttRouter};
+use crate::mqtt_helper::*;
 use crate::opt_env_var;
 use anyhow::Context;
 use arc_swap::ArcSwap;
@@ -879,15 +879,14 @@ struct SerialAndScene {
 }
 
 async fn mqtt_scene_activate(
-    SerialAndScene { serial, scene_id }: SerialAndScene,
-    msg: Message,
-    state: Arc<Pv2MqttState>,
+    Params(SerialAndScene { serial, scene_id }): Params<SerialAndScene>,
+    Topic(topic): Topic,
+    State(state): State<Arc<Pv2MqttState>>,
 ) -> anyhow::Result<()> {
     if serial != state.serial {
         log::warn!(
             "ignoring {topic} which is intended for \
                     serial={serial}, while we are serial {actual_serial}",
-            topic = msg.topic,
             actual_serial = state.serial
         );
         return Ok(());
@@ -925,31 +924,27 @@ struct SerialAndShade {
     shade_id: ShadeIdAddr,
 }
 async fn mqtt_shade_set_position(
-    params: SerialAndShade,
-    msg: Message,
-    state: Arc<Pv2MqttState>,
+    params: Params<SerialAndShade>,
+    Topic(topic): Topic,
+    State(state): State<Arc<Pv2MqttState>>,
+    Payload(position): Payload<u8>,
 ) -> anyhow::Result<()> {
-    let SerialAndShade {
+    let Params(SerialAndShade {
         serial,
         shade_id: ShadeIdAddr {
             shade_id,
             is_secondary,
         },
-    } = params;
+    }) = params;
 
     if serial != state.serial {
         log::warn!(
             "ignoring {topic} which is intended for \
                     serial={serial}, while we are serial {actual_serial}",
-            topic = msg.topic,
             actual_serial = state.serial
         );
         return Ok(());
     }
-
-    let payload = String::from_utf8_lossy(&msg.payload);
-
-    let position: u8 = payload.parse()?;
 
     let hub = state.hub.load();
     let shade = hub.hub.shade_by_id(shade_id).await?;
@@ -979,29 +974,28 @@ async fn mqtt_shade_set_position(
 }
 
 async fn mqtt_shade_command(
-    params: SerialAndShade,
-    msg: Message,
-    state: Arc<Pv2MqttState>,
+    params: Params<SerialAndShade>,
+    Topic(topic): Topic,
+    State(state): State<Arc<Pv2MqttState>>,
+    Payload(command): Payload<String>,
 ) -> anyhow::Result<()> {
-    let SerialAndShade {
+    let Params(SerialAndShade {
         serial,
         shade_id: ShadeIdAddr {
             shade_id,
             is_secondary: _,
         },
-    } = params;
+    }) = params;
 
     if serial != state.serial {
         log::warn!(
             "ignoring {topic} which is intended for \
                     serial={serial}, while we are serial {actual_serial}",
-            topic = msg.topic,
             actual_serial = state.serial
         );
         return Ok(());
     }
 
-    let command = String::from_utf8_lossy(&msg.payload);
     let hub = state.hub.load();
     let shade = hub.hub.shade_by_id(shade_id).await?;
 
@@ -1027,14 +1021,10 @@ async fn mqtt_shade_command(
 }
 
 async fn mqtt_homeassitant_status(
-    _: (),
-    msg: Message,
-    state: Arc<Pv2MqttState>,
+    Payload(status): Payload<String>,
+    State(state): State<Arc<Pv2MqttState>>,
 ) -> anyhow::Result<()> {
-    log::info!(
-        "Home Assistant status changed: {}",
-        String::from_utf8_lossy(&msg.payload)
-    );
+    log::info!("Home Assistant status changed: {status}",);
     register_with_hass(&state).await
 }
 
