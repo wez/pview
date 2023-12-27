@@ -1032,9 +1032,13 @@ async fn mqtt_shade_command(
 
 async fn mqtt_homeassitant_status(
     _: (),
-    _: Message,
+    msg: Message,
     state: Arc<Pv2MqttState>,
 ) -> anyhow::Result<()> {
+    log::info!(
+        "Home Assistant status changed: {}",
+        String::from_utf8_lossy(&msg.payload)
+    );
     register_with_hass(&state).await
 }
 
