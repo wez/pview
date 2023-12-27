@@ -123,7 +123,7 @@ pub async fn resolve_hubs(timeout: Option<Duration>) -> anyhow::Result<Receiver<
                     }
                 }
                 Err(err) => {
-                    log::warn!("{err:#?}");
+                    log::debug!("{err:#?}");
                 }
             }
         }
