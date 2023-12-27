@@ -18,6 +18,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -119,7 +120,10 @@ impl HassRegistration {
         self.updates.push(RegEntry::msg(topic, payload));
     }
 
-    pub async fn apply_updates(self, client: &Client) -> anyhow::Result<()> {
+    pub async fn apply_updates(mut self, state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
+        if !state.first_run.load(Ordering::SeqCst) {
+            self.deletes.clear();
+        }
         for queue in [self.deletes, self.configs, self.updates] {
             for entry in queue {
                 match entry {
@@ -127,13 +131,15 @@ impl HassRegistration {
                         tokio::time::sleep(duration).await;
                     }
                     RegEntry::Msg { topic, payload } => {
-                        client
+                        state
+                            .client
                             .publish(&topic, payload.as_bytes(), QoS::AtMostOnce, false)
                             .await?;
                     }
                 }
             }
         }
+        state.first_run.store(false, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -498,7 +504,7 @@ impl ServeMqttCommand {
         Self::register_hub(&state.hub.load().user_data, state, &mut reg).await?;
         Self::register_shades(state, &mut reg).await?;
         Self::register_scenes(state, &mut reg).await?;
-        reg.apply_updates(&state.client).await?;
+        reg.apply_updates(state).await?;
         Ok(())
     }
 
@@ -551,6 +557,7 @@ impl ServeMqttCommand {
             serial: serial.clone(),
             http_port,
             discovery_prefix: self.discovery_prefix.clone(),
+            first_run: AtomicBool::new(true),
         });
 
         self.update_homeautomation_hook(&state).await?;
@@ -985,6 +992,7 @@ struct Pv2MqttState {
     serial: String,
     http_port: u16,
     discovery_prefix: String,
+    first_run: AtomicBool,
 }
 
 struct Dispatcher<S = ()>
