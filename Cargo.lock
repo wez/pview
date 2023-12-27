@@ -965,9 +965,9 @@ checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "libmosquitto-sys"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cba85d7aa02eb4beb97bd229a5c9d1971e34e072a6e42c7894c9e435031067bc"
+checksum = "930a320a2c19b90900bf6266bd39f95324e6c3f1621775e10600d9b22291b39c"
 dependencies = [
  "cc",
  "openssl-sys",
@@ -1055,9 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "mosquitto-rs"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7645c10f77cefaf0f9edeccff3823ad2dd4eec20682fe751cd3eec8798908a0"
+checksum = "7020055afc5e2b96ac4958ccb1a6380dc498eb4bab9a0e64428aa9283c37b927"
 dependencies = [
  "async-channel 2.1.1",
  "lazy_static",
