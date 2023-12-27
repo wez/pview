@@ -275,14 +275,6 @@ impl ServeMqttCommand {
             .map(|room| (room.id, room.name))
             .collect();
 
-        state
-            .client
-            .subscribe(&format!("{MODEL}/shade/+/+/command"), QoS::AtMostOnce)
-            .await?;
-        state
-            .client
-            .subscribe(&format!("{MODEL}/scene/+/+/set"), QoS::AtMostOnce)
-            .await?;
         let serial = &state.serial;
 
         for shade in &shades {
