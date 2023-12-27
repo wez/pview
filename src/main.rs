@@ -9,6 +9,7 @@ mod commands;
 mod discovery;
 mod http_helpers;
 mod hub;
+mod mqtt_helper;
 
 use crate::hub::*;
 
