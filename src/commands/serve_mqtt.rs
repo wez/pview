@@ -107,7 +107,7 @@ impl HassRegistration {
     pub fn delete<T: Into<String>>(&mut self, topic: T) {
         if self.deletes.is_empty() {
             self.deletes
-                .push(RegEntry::Delay(Duration::from_millis(500)));
+                .push(RegEntry::Delay(Duration::from_secs(4)));
         }
         self.deletes.push(RegEntry::msg(topic, ""));
     }
