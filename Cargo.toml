@@ -11,6 +11,11 @@ build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["mqtt-tls"]
+mqtt-tls = ["mosquitto-rs/vendored-mosquitto", "mosquitto-rs/vendored-mosquitto-tls"]
+mqtt-no-tls = ["mosquitto-rs/vendored-mosquitto"]
+
 [dependencies]
 anyhow = "1.0.75"
 arc-swap = "1.6.0"
@@ -39,5 +44,6 @@ version = "0.1.2"
 #path = "../mdns"
 
 [dependencies.mosquitto-rs]
-version="0.6.2"
+version="0.7.0"
+default-features = false
 #path = "../mosquitto-rs/mosquitto-rs"

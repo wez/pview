@@ -1,0 +1,62 @@
+## This flavor of the build is without TLS support.
+## It is consequently very easy to cross compile, which yields
+## fast builds for the various platforms.
+####################################################################################################
+## Builder
+####################################################################################################
+FROM --platform=$BUILDPLATFORM alpine:latest AS builder
+ARG TARGETPLATFORM
+RUN case "$TARGETPLATFORM" in \
+      "linux/arm/v7") echo armv7-unknown-linux-musleabihf > /rust_target.txt ;; \
+      "linux/arm/v6") echo arm-unknown-linux-musleabihf > /rust_target.txt ;; \
+      "linux/amd64") echo x86_64-unknown-linux-musl > /rust_target.txt ;; \
+      "linux/arm64") echo aarch64-unknown-linux-musl > /rust_target.txt ;; \
+      *) echo "Do $TARGETPLATFORM"; exit 1 ;; \
+    esac ; \
+    echo "Building for $TARGETPLATFORM via $(cat /rust_target.txt)"
+RUN apk --no-cache add clang git curl rustup musl lld
+RUN rustup-init -y
+ENV PATH=/root/.cargo/bin:$PATH
+RUN rustup target add $(cat /rust_target.txt)
+
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "1000" \
+    "pview"
+
+WORKDIR /work
+COPY . .
+
+RUN --mount=type=ssh \
+    --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/work/target \
+    CC=clang cargo install --target $(cat /rust_target.txt) --bin pview --no-default-features --features mqtt-no-tls --path .
+
+####################################################################################################
+## Final image
+####################################################################################################
+FROM scratch
+
+# Import from builder.
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+
+WORKDIR /app
+
+COPY --from=builder /lib/ld-musl*.so* /usr/lib/libgcc*.so* /lib/
+COPY --from=builder /root/.cargo/bin/pview ./
+
+USER pview:pview
+LABEL org.opencontainers.image.source="https://github.com/wez/pview"
+ENV \
+  RUST_BACKTRACE=full \
+  PATH=/app:$PATH
+
+CMD ["/app/pview", "serve-mqtt"]
+
+
