@@ -6,6 +6,7 @@ on:
       - "**/*.rs"
       - "**/Cargo.*"
       - ".github/workflows/build.yml"
+      - ".cargo/config.toml"
       - "Dockerfile"
       - ".dockerignore"
 
