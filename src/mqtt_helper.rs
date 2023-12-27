@@ -93,37 +93,32 @@ pub trait MakeDispatcher<T, S: Clone> {
     fn make_dispatcher(func: Self) -> Dispatcher<S>;
 }
 
-impl<F, S, Fut> MakeDispatcher<(), S> for F
+macro_rules! impl_make_dispatcher {
+    (
+        [$($ty:ident),*], $last:ident
+    ) => {
+
+impl<F, S, Fut, $($ty,)* $last> MakeDispatcher<($($ty,)* $last,), S> for F
 where
-    F: (Fn() -> Fut) + Clone + 'static,
+    F: (Fn($($ty,)* $last) -> Fut) + Clone + 'static,
     Fut: Future<Output = MqttHandlerResult>,
     S: Clone + 'static,
+    $( $ty: FromRequest<S>, )*
+    $last: FromRequest<S>
 {
-    fn make_dispatcher(func: F) -> Dispatcher<S> {
-        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
-            Box::new(move |_request: Request<S>| {
-                let func = func.clone();
-                Box::pin(async move { func().await })
-            });
-
-        Dispatcher::new(wrap)
-    }
-}
-
-impl<F, S, Fut, P1> MakeDispatcher<(P1,), S> for F
-where
-    F: (Fn(P1) -> Fut) + Clone + 'static,
-    Fut: Future<Output = MqttHandlerResult>,
-    S: Clone + 'static,
-    P1: FromRequest<S>,
-{
+    #[allow(non_snake_case)]
     fn make_dispatcher(func: F) -> Dispatcher<S> {
         let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
             Box::new(move |request: Request<S>| {
                 let func = func.clone();
                 Box::pin(async move {
-                    let p1 = P1::from_request(&request)?;
-                    func(p1).await
+                    $(
+                    let $ty = $ty::from_request(&request)?;
+                    )*
+
+                    let $last = $last::from_request(&request)?;
+
+                    func($($ty,)* $last).await
                 })
             });
 
@@ -131,80 +126,32 @@ where
     }
 }
 
-impl<F, S, Fut, P1, P2> MakeDispatcher<(P1, P2), S> for F
-where
-    F: (Fn(P1, P2) -> Fut) + Clone + 'static,
-    Fut: Future<Output = MqttHandlerResult>,
-    S: Clone + 'static,
-    P1: FromRequest<S>,
-    P2: FromRequest<S>,
-{
-    fn make_dispatcher(func: F) -> Dispatcher<S> {
-        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
-            Box::new(move |request: Request<S>| {
-                let func = func.clone();
-                Box::pin(async move {
-                    let p1 = P1::from_request(&request)?;
-                    let p2 = P2::from_request(&request)?;
-                    func(p1, p2).await
-                })
-            });
-
-        Dispatcher::new(wrap)
     }
 }
 
-impl<F, S, Fut, P1, P2, P3> MakeDispatcher<(P1, P2, P3), S> for F
-where
-    F: (Fn(P1, P2, P3) -> Fut) + Clone + 'static,
-    Fut: Future<Output = MqttHandlerResult>,
-    S: Clone + 'static,
-    P1: FromRequest<S>,
-    P2: FromRequest<S>,
-    P3: FromRequest<S>,
-{
-    fn make_dispatcher(func: F) -> Dispatcher<S> {
-        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
-            Box::new(move |request: Request<S>| {
-                let func = func.clone();
-                Box::pin(async move {
-                    let p1 = P1::from_request(&request)?;
-                    let p2 = P2::from_request(&request)?;
-                    let p3 = P3::from_request(&request)?;
-                    func(p1, p2, p3).await
-                })
-            });
-
-        Dispatcher::new(wrap)
-    }
+#[rustfmt::skip]
+macro_rules! all_the_tuples {
+    ($name:ident) => {
+        $name!([], T1);
+        $name!([T1], T2);
+        $name!([T1, T2], T3);
+        $name!([T1, T2, T3], T4);
+        $name!([T1, T2, T3, T4], T5);
+        $name!([T1, T2, T3, T4, T5], T6);
+        $name!([T1, T2, T3, T4, T5, T6], T7);
+        $name!([T1, T2, T3, T4, T5, T6, T7], T8);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8], T9);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9], T10);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10], T11);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11], T12);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12], T13);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13], T14);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14], T15);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15], T16);
+    };
 }
 
-impl<F, S, Fut, P1, P2, P3, P4> MakeDispatcher<(P1, P2, P3, P4), S> for F
-where
-    F: (Fn(P1, P2, P3, P4) -> Fut) + Clone + 'static,
-    Fut: Future<Output = MqttHandlerResult>,
-    S: Clone + 'static,
-    P1: FromRequest<S>,
-    P2: FromRequest<S>,
-    P3: FromRequest<S>,
-    P4: FromRequest<S>,
-{
-    fn make_dispatcher(func: F) -> Dispatcher<S> {
-        let wrap: Box<dyn Fn(Request<S>) -> Pin<Box<dyn Future<Output = MqttHandlerResult>>>> =
-            Box::new(move |request: Request<S>| {
-                let func = func.clone();
-                Box::pin(async move {
-                    let p1 = P1::from_request(&request)?;
-                    let p2 = P2::from_request(&request)?;
-                    let p3 = P3::from_request(&request)?;
-                    let p4 = P4::from_request(&request)?;
-                    func(p1, p2, p3, p4).await
-                })
-            });
-
-        Dispatcher::new(wrap)
-    }
-}
+all_the_tuples!(impl_make_dispatcher);
 
 pub struct MqttRouter<S>
 where
