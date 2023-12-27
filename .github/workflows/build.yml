@@ -124,6 +124,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NO_TLS }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+            type=ref,event=pr
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
