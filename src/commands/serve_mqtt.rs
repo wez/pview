@@ -995,6 +995,7 @@ struct Pv2MqttState {
     first_run: AtomicBool,
 }
 
+/// A helper struct to type-erase handler functions for the router
 struct Dispatcher<S = ()>
 where
     S: Clone,
@@ -1043,6 +1044,12 @@ impl<S: Clone + 'static> MqttRouter<S> {
         }
     }
 
+    /// Register a route from a path like `foo/:bar` to a handler function.
+    /// The corresponding mqtt topic (`foo/+` in this case) will be subscribed to.
+    /// When a message is received with that topic (say `foo/hello`) it will generate
+    /// a parameter map like `{"bar": "hello"}`.
+    /// That parameter map will then be deserialized into type `T` and passed as the
+    /// first parameter of the handler function that is also passsed into `route`.
     pub async fn route<'a, P, T, F, Fut>(&mut self, path: P, handler: F) -> anyhow::Result<()>
     where
         P: Into<String>,
@@ -1058,6 +1065,7 @@ impl<S: Clone + 'static> MqttRouter<S> {
         Ok(())
     }
 
+    /// Dispatch an mqtt message to a registered handler
     pub async fn dispatch(&self, message: Message, state: S) -> anyhow::Result<()> {
         let topic = message.topic.to_string();
         let matched = self.router.at(&topic)?;
@@ -1080,6 +1088,8 @@ impl<S: Clone + 'static> MqttRouter<S> {
     }
 }
 
+/// A helper to deserialize from a string into any type that
+/// implements FromStr
 pub fn parse_deser<'de, D, T: FromStr>(d: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1091,6 +1101,8 @@ where
         .map_err(|err| D::Error::custom(format!("parsing {s}: {err:#}")))
 }
 
+/// Convert a Router route into the corresponding mqtt topic.
+/// `:foo` is replaced by `+`.
 fn route_to_topic(route: &str) -> String {
     let mut result = String::new();
     let mut in_param = false;
