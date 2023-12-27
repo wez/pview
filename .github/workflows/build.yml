@@ -28,7 +28,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_WITH_TLS }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{ githubref == 'refs/heads/main' }}
             type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
             type=ref,event=pr
       - name: Set up Docker Buildx
@@ -68,7 +68,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NO_TLS }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable={{ githubref == 'refs/heads/main' }}
             type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
             type=ref,event=pr
       - name: Set up QEMU

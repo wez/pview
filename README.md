@@ -53,7 +53,7 @@ PV_MQTT_PORT=1883
 version: '3.8'
 services:
   pv2mqtt:
-    image: ghcr.io/wez/pview:latest
+    image: ghcr.io/wez/pview-no-tls:latest
     container_name: pv2mqtt
     restart: unless-stopped
     env_file:
