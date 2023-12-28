@@ -21,7 +21,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -61,7 +61,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
