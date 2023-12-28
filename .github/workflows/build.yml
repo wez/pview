@@ -1,4 +1,7 @@
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -98,7 +101,7 @@ jobs:
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
-          echo "DIGEST_NAME=$(echo ${{ matrix.platform }} | sed 's,-,/,g')" >> $GITHUB_OUTPUT
+          echo "DIGEST_NAME=$(echo ${{ matrix.platform }} | sed 's,/,-,g')" >> $GITHUB_OUTPUT
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
