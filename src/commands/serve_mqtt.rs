@@ -24,6 +24,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 const SECONDARY_SUFFIX: &str = "_middle";
 const MODEL: &str = "pv2mqtt";
 const WEZ: &str = "Wez Furlong";
+const HUNTER_DOUGLAS: &str = "Hunter Douglas";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
 
@@ -301,7 +302,7 @@ async fn register_shades(
             identifiers: vec![device_id.clone()],
             via_device: Some(format!("{MODEL}-{serial}")),
             name: shade.name().to_string(),
-            manufacturer: "Hunter Douglas".to_string(),
+            manufacturer: HUNTER_DOUGLAS.to_string(),
             model: MODEL.to_string(),
             connections: vec![],
             sw_version: shade
@@ -429,6 +430,38 @@ async fn register_shades(
 
             reg.update(calibrate.base.availability_topic, "online");
         }
+
+        {
+            let heart = ButtonConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-heart"),
+                    name: Some("Move to Favorite Position".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/heart/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                },
+                icon: Some("mdi:heart".to_string()),
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                payload_press: Some("HEART".to_string()),
+            };
+            reg.delete(format!(
+                "{}/button/{device_id}-heart/config",
+                state.discovery_prefix
+            ));
+
+            // Tell hass about this shade
+            reg.config(
+                format!("{}/button/{device_id}-heart/config", state.discovery_prefix),
+                serde_json::to_string(&heart)?,
+            );
+
+            reg.update(heart.base.availability_topic, "online");
+        }
     }
 
     Ok(())
@@ -465,7 +498,7 @@ async fn register_scenes(
                     identifiers: vec![unique_id.clone()],
                     via_device: Some(format!("{MODEL}-{serial}")),
                     name: scene_name,
-                    manufacturer: WEZ.to_string(),
+                    manufacturer: HUNTER_DOUGLAS.to_string(),
                     model: MODEL.to_string(),
                     connections: vec![],
                     sw_version: None,
@@ -1113,6 +1146,11 @@ async fn mqtt_shade_command(
         "CALIBRATE" => {
             hub.hub
                 .move_shade(shade_id, ShadeUpdateMotion::Calibrate)
+                .await?;
+        }
+        "HEART" => {
+            hub.hub
+                .move_shade(shade_id, ShadeUpdateMotion::Heart)
                 .await?;
         }
         _ => {}
