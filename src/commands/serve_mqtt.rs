@@ -881,6 +881,21 @@ impl ServeMqttCommand {
                 ServerEvent::PeriodicStateUpdate => {
                     if let Err(err) = register_with_hass(&state).await {
                         log::error!("During register_with_hass: {err:#?}");
+
+                        // Look for a request error; it isn't the root cause but rather
+                        // the penultimate cause, so we have to walk the chain to find it.
+                        for cause in err.chain() {
+                            if let Some(http_err) = cause.downcast_ref::<reqwest::Error>() {
+                                if http_err.is_connect() {
+                                    if let Err(err) = advise_hass_of_unresponsive(&state).await {
+                                        log::error!(
+                                            "While advising hass of unresponsive hub: {err:#}"
+                                        );
+                                    }
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
             }
