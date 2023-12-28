@@ -36,5 +36,6 @@ if bashio::config.has_value debug_level ; then
 fi
 
 env | grep PV_ | grep -v PASSWORD
+set -x
 
 exec /pview serve-mqtt

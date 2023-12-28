@@ -15,4 +15,10 @@ addon:
 			--test \
 			--target /data
 
-.PHONY: addon fmt check
+# This will start hass on http://localhost:7123
+container:
+	npm install @devcontainers/cli
+	npx @devcontainers/cli up --workspace-folder .
+	npx @devcontainers/cli exec --workspace-folder . supervisor_run
+
+.PHONY: addon fmt check hass
