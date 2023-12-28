@@ -12,8 +12,8 @@ init: false
 startup: services
 services:
   - mqtt:need
-#map:
-#  - config:rw
+
+apparmor: true
 
 # Host network access is required for discovery of the bridge
 host_network: true

@@ -32,7 +32,7 @@ if bashio::config.has_value mqtt_pass ; then
 fi
 
 if bashio::config.has_value debug_level ; then
-  export RUST_LOG=pview="$(bashio::config debug_level)"
+  export RUST_LOG="pview=$(bashio::config debug_level)"
 fi
 
 env | grep PV_
