@@ -3,6 +3,7 @@ use crate::api_types::{
     ShadeCapabilityFlags, ShadePosition, ShadeUpdateMotion, UserData,
 };
 use crate::discovery::ResolvedHub;
+use crate::hass_helper::*;
 use crate::hub::Hub;
 use crate::mqtt_helper::*;
 use crate::opt_env_var;
@@ -22,6 +23,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 const SECONDARY_SUFFIX: &str = "_middle";
 const MODEL: &str = "pv2mqtt";
+const WEZ: &str = "Wez Furlong";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
 
@@ -155,36 +157,39 @@ async fn register_diagnostic_entity(
     let serial = &user_data.serial_number;
     let unique_id = &diagnostic.unique_id;
 
-    let data = serde_json::json!({
-        "name": diagnostic.name,
-        "unique_id": unique_id,
-        "state_topic": format!("{MODEL}/sensor/{unique_id}/state"),
-        "availability_topic": format!("{MODEL}/sensor/{unique_id}/availability"),
-        "device": {
-            "identifiers": [
-                format!("{MODEL}-{serial}"),
-                user_data.serial_number,
-                user_data.mac_address,
-            ],
-            "connections": [
-                ["mac", user_data.mac_address],
-            ],
-            "name": format!("{} PowerView Hub: {}", user_data.brand, user_data.hub_name.to_string()),
-            "manufacturer": "Wez Furlong",
-            "model": MODEL,
-            "sw_version": pview_version(),
+    let config = SensorConfig {
+        base: EntityConfig {
+            name: Some(diagnostic.name),
+            availability_topic: format!("{MODEL}/sensor/{unique_id}/availability"),
+            device: Device {
+                identifiers: vec![
+                    format!("{MODEL}-{serial}"),
+                    user_data.serial_number.to_string(),
+                    user_data.mac_address.to_string(),
+                ],
+                connections: vec![("mac".to_string(), user_data.mac_address.to_string())],
+                name: format!(
+                    "{} PowerView Hub: {}",
+                    user_data.brand,
+                    user_data.hub_name.to_string()
+                ),
+                manufacturer: WEZ.to_string(),
+                model: MODEL.to_string(),
+                sw_version: Some(pview_version().to_string()),
+                suggested_area: None,
+                via_device: None,
+            },
+            device_class: None,
+            origin: Origin::default(),
+            unique_id: unique_id.to_string(),
         },
-        "entity_category": "diagnostic",
-        "origin": {
-            "name": MODEL,
-            "sw_version": pview_version(),
-            "url": "https://github.com/wez/pview",
-        },
-    });
+        entity_category: "diagnostic".to_string(),
+        state_topic: format!("{MODEL}/sensor/{unique_id}/state"),
+    };
 
     reg.config(
         format!("{}/sensor/{unique_id}/config", state.discovery_prefix),
-        serde_json::to_string(&data)?,
+        serde_json::to_string(&config)?,
     );
 
     reg.update(format!("{MODEL}/sensor/{unique_id}/availability"), "online");
@@ -269,11 +274,7 @@ async fn register_shades(
             None => continue,
         };
 
-        let mut shades = vec![(
-            shade.id.to_string(),
-            serde_json::Value::Null,
-            Some(position.pos1_percent()),
-        )];
+        let mut shades = vec![(shade.id.to_string(), None, Some(position.pos1_percent()))];
 
         // The shade data doesn't always include the second rail
         // position, so we must use the capabilities to decide if
@@ -285,52 +286,47 @@ async fn register_shades(
         {
             shades.push((
                 format!("{}{SECONDARY_SUFFIX}", shade.id),
-                serde_json::json!("Middle Rail"),
+                Some("Middle Rail".to_string()),
                 position.pos2_percent(),
             ));
         }
 
+        let area = shade
+            .room_id
+            .and_then(|room_id| room_by_id.get(&room_id).map(|name| name.to_string()));
+
         let device_id = format!("{serial}-{}", shade.id);
+        let device = Device {
+            suggested_area: area,
+            identifiers: vec![device_id],
+            via_device: Some(format!("{MODEL}-{serial}")),
+            name: shade.name().to_string(),
+            manufacturer: "Hunter Douglas".to_string(),
+            model: MODEL.to_string(),
+            connections: vec![],
+            sw_version: shade
+                .firmware
+                .as_ref()
+                .map(|vers| format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)),
+        };
 
         for (shade_id, shade_name, pos) in shades {
-            let area = shade
-                .room_id
-                .and_then(|room_id| {
-                    room_by_id
-                        .get(&room_id)
-                        .map(|name| serde_json::json!(name.as_str()))
-                })
-                .unwrap_or(serde_json::Value::Null);
             let unique_id = format!("{serial}-{shade_id}");
 
-            let data = serde_json::json!({
-                "name": shade_name ,
-                "device_class": "shade",
-                "unique_id": unique_id,
-                "state_topic": format!("{MODEL}/shade/{serial}/{shade_id}/state"),
-                "position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/position"),
-                "availability_topic": format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
-                "set_position_topic": format!("{MODEL}/shade/{serial}/{shade_id}/set_position"),
-                "command_topic": format!("{MODEL}/shade/{serial}/{shade_id}/command"),
-                "device": {
-                    "suggested_area": area,
-                    "identifiers": [
-                        device_id
-                    ],
-                    "via_device": format!("{MODEL}-{serial}"),
-                    "name": shade.name(),
-                    "manufacturer": "Hunter Douglas",
-                    "model": MODEL,
-                    "sw_version": shade.firmware.as_ref().map(|vers| {
-                        format!("{}.{}.{}", vers.revision, vers.sub_revision, vers.build)
-                    }).unwrap_or_else(|| "unknown".to_string()),
+            let config = CoverConfig {
+                base: EntityConfig {
+                    unique_id,
+                    name: shade_name,
+                    availability_topic: format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
+                    device_class: Some("shade".to_string()),
+                    origin: Origin::default(),
+                    device: device.clone(),
                 },
-                "origin": {
-                    "name": MODEL,
-                    "sw_version": pview_version(),
-                    "url": "https://github.com/wez/pview",
-                },
-            });
+                command_topic: format!("{MODEL}/shade/{serial}/{shade_id}/command"),
+                position_topic: format!("{MODEL}/shade/{serial}/{shade_id}/position"),
+                set_position_topic: format!("{MODEL}/shade/{serial}/{shade_id}/set_position"),
+                state_topic: format!("{MODEL}/shade/{serial}/{shade_id}/state"),
+            };
 
             // Delete legacy version of this shade, for those upgrading.
             // TODO: remove this, or find some way to keep track of what
@@ -346,7 +342,7 @@ async fn register_shades(
                     "{}/cover/{serial}-{shade_id}/config",
                     state.discovery_prefix
                 ),
-                serde_json::to_string(&data)?,
+                serde_json::to_string(&config)?,
             );
 
             reg.update(
@@ -392,30 +388,31 @@ async fn register_scenes(
         let scene_id = scene.id;
         let scene_name = scene.name.to_string();
 
-        let area = room_by_id
-            .get(&scene.room_id)
-            .map(|name| serde_json::json!(name.as_str()))
-            .unwrap_or(serde_json::Value::Null);
+        let suggested_area = room_by_id.get(&scene.room_id).map(|name| name.to_string());
 
         let unique_id = format!("{serial}-scene-{scene_id}");
 
-        let data = serde_json::json!({
-            "name": serde_json::Value::Null,
-            "unique_id": unique_id,
-            "availability_topic": format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
-            "command_topic": format!("{MODEL}/scene/{serial}/{scene_id}/set"),
-            "payload_on": "ON",
-            "device": {
-                "suggested_area": area,
-                "identifiers": [
-                    unique_id,
-                ],
-                "via_device": format!("{MODEL}-{serial}"),
-                "name": scene_name,
-                "manufacturer": "Wez Furlong",
-                "model": MODEL,
+        let config = SceneConfig {
+            base: EntityConfig {
+                device: Device {
+                    suggested_area,
+                    identifiers: vec![unique_id.clone()],
+                    via_device: Some(format!("{MODEL}-{serial}")),
+                    name: scene_name,
+                    manufacturer: WEZ.to_string(),
+                    model: MODEL.to_string(),
+                    connections: vec![],
+                    sw_version: None,
+                },
+                availability_topic: format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
+                device_class: None,
+                name: None,
+                origin: Origin::default(),
+                unique_id: unique_id.clone(),
             },
-        });
+            command_topic: format!("{MODEL}/scene/{serial}/{scene_id}/set"),
+            payload_on: "ON".to_string(),
+        };
 
         // Delete legacy scene
         reg.delete(format!(
@@ -426,7 +423,7 @@ async fn register_scenes(
         // Tell hass about this scene
         reg.config(
             format!("{}/scene/{unique_id}/config", state.discovery_prefix),
-            serde_json::to_string(&data)?,
+            serde_json::to_string(&config)?,
         );
 
         reg.update(

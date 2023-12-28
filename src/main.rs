@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 mod api_types;
 mod commands;
 mod discovery;
+mod hass_helper;
 mod http_helpers;
 mod hub;
 mod mqtt_helper;
