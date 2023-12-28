@@ -92,14 +92,16 @@ jobs:
           push: true
           outputs: type=image,name=${{ env.IMAGE_NO_TLS }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
+        id: digest
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
+          echo "::set-output name=name::$(echo ${{ matrix.platform }} | sed 's,-,/,g')"
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digest-${{ matrix.platform }}
+          name: digest-${{ steps.digest.outputs.name }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
