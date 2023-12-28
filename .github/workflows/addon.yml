@@ -7,12 +7,6 @@ on:
     paths:
       - "addon/**"
       - ".github/workflows/addon.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "addon/**"
-      - ".github/workflows/addon.yml"
 
 jobs:
   build:
