@@ -13,6 +13,8 @@ pub struct EntityConfig {
     pub origin: Origin,
     pub device: Device,
     pub unique_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_category: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -75,7 +77,6 @@ pub struct SensorConfig {
     pub base: EntityConfig,
 
     pub state_topic: String,
-    pub entity_category: String,
 }
 
 #[derive(Serialize, Clone, Debug)]

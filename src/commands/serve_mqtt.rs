@@ -182,8 +182,8 @@ async fn register_diagnostic_entity(
             device_class: None,
             origin: Origin::default(),
             unique_id: unique_id.to_string(),
+            entity_category: Some("diagnostic".to_string()),
         },
-        entity_category: "diagnostic".to_string(),
         state_topic: format!("{MODEL}/sensor/{unique_id}/state"),
     };
 
@@ -321,6 +321,7 @@ async fn register_shades(
                     device_class: Some("shade".to_string()),
                     origin: Origin::default(),
                     device: device.clone(),
+                    entity_category: None,
                 },
                 command_topic: format!("{MODEL}/shade/{serial}/{shade_id}/command"),
                 position_topic: format!("{MODEL}/shade/{serial}/{shade_id}/position"),
@@ -373,11 +374,17 @@ async fn register_shades(
                     device_class: None,
                     origin: Origin::default(),
                     device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
                 },
                 icon: None,
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("JOG".to_string()),
             };
+
+            reg.delete(format!(
+                "{}/button/{device_id}-jog/config",
+                state.discovery_prefix
+            ));
 
             // Tell hass about this shade
             reg.config(
@@ -400,11 +407,16 @@ async fn register_shades(
                     device_class: None,
                     origin: Origin::default(),
                     device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
                 },
                 icon: None,
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("CALIBRATE".to_string()),
             };
+            reg.delete(format!(
+                "{}/button/{device_id}-calibrate/config",
+                state.discovery_prefix
+            ));
 
             // Tell hass about this shade
             reg.config(
@@ -463,6 +475,7 @@ async fn register_scenes(
                 name: None,
                 origin: Origin::default(),
                 unique_id: unique_id.clone(),
+                entity_category: None,
             },
             command_topic: format!("{MODEL}/scene/{serial}/{scene_id}/set"),
             payload_on: "ON".to_string(),
