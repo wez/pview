@@ -77,3 +77,15 @@ pub struct SensorConfig {
     pub state_topic: String,
     pub entity_category: String,
 }
+
+#[derive(Serialize, Clone, Debug)]
+pub struct ButtonConfig {
+    #[serde(flatten)]
+    pub base: EntityConfig,
+
+    pub command_topic: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_press: Option<String>,
+}

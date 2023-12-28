@@ -192,7 +192,7 @@ async fn register_diagnostic_entity(
         serde_json::to_string(&config)?,
     );
 
-    reg.update(format!("{MODEL}/sensor/{unique_id}/availability"), "online");
+    reg.update(config.base.availability_topic, "online");
 
     reg.update(
         format!("{MODEL}/sensor/{unique_id}/state"),
@@ -298,7 +298,7 @@ async fn register_shades(
         let device_id = format!("{serial}-{}", shade.id);
         let device = Device {
             suggested_area: area,
-            identifiers: vec![device_id],
+            identifiers: vec![device_id.clone()],
             via_device: Some(format!("{MODEL}-{serial}")),
             name: shade.name().to_string(),
             manufacturer: "Hunter Douglas".to_string(),
@@ -345,10 +345,7 @@ async fn register_shades(
                 serde_json::to_string(&config)?,
             );
 
-            reg.update(
-                format!("{MODEL}/shade/{serial}/{shade_id}/availability"),
-                "online",
-            );
+            reg.update(config.base.availability_topic, "online");
 
             // We may not know the position; this can happen when the shade is
             // partially out of sync, for example, for a top-down-bottom-up
@@ -362,6 +359,63 @@ async fn register_shades(
                 let state = if pos == 0 { "closed" } else { "open" };
                 reg.update(format!("{MODEL}/shade/{serial}/{shade_id}/state"), state);
             }
+        }
+
+        {
+            let jog = ButtonConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-jog"),
+                    name: Some("Jog".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/jog/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                },
+                icon: None,
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                payload_press: Some("JOG".to_string()),
+            };
+
+            // Tell hass about this shade
+            reg.config(
+                format!("{}/button/{device_id}-jog/config", state.discovery_prefix),
+                serde_json::to_string(&jog)?,
+            );
+
+            reg.update(jog.base.availability_topic, "online");
+        }
+
+        {
+            let calibrate = ButtonConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-calibrate"),
+                    name: Some("Calibrate".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/calibrate/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                },
+                icon: None,
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                payload_press: Some("CALIBRATE".to_string()),
+            };
+
+            // Tell hass about this shade
+            reg.config(
+                format!(
+                    "{}/button/{device_id}-calibrate/config",
+                    state.discovery_prefix
+                ),
+                serde_json::to_string(&calibrate)?,
+            );
+
+            reg.update(calibrate.base.availability_topic, "online");
         }
     }
 
@@ -426,10 +480,7 @@ async fn register_scenes(
             serde_json::to_string(&config)?,
         );
 
-        reg.update(
-            format!("{MODEL}/scene/{serial}/{scene_id}/availability"),
-            "online",
-        );
+        reg.update(config.base.availability_topic, "online");
     }
 
     Ok(())
@@ -1041,6 +1092,14 @@ async fn mqtt_shade_command(
         "STOP" => {
             hub.hub
                 .move_shade(shade_id, ShadeUpdateMotion::Stop)
+                .await?;
+        }
+        "JOG" => {
+            hub.hub.move_shade(shade_id, ShadeUpdateMotion::Jog).await?;
+        }
+        "CALIBRATE" => {
+            hub.hub
+                .move_shade(shade_id, ShadeUpdateMotion::Calibrate)
                 .await?;
         }
         _ => {}
