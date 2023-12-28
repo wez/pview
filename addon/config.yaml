@@ -1,4 +1,5 @@
 name: PowerView to MQTT Bridge
+image: ghcr.io/wez/pview-addon-{arch}
 version: "latest"
 slug: pv2mqtt
 description: Control Hunter Douglas Shades via the PowerView Hub

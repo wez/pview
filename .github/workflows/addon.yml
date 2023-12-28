@@ -1,0 +1,31 @@
+name: addon
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "addon/**"
+      - ".github/workflows/addon.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "addon/**"
+      - ".github/workflows/addon.yml"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Test build
+      uses: home-assistant/builder@master
+      with:
+        args: |
+          --test \
+          --all \
+          --target /data/addon
+
