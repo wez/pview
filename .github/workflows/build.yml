@@ -41,7 +41,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: https://ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push by digest
         id: build
@@ -84,7 +84,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: https://ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push by digest
         id: build
@@ -141,7 +141,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: https://ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create manifest list and push
         working-directory: /tmp/digests
@@ -161,6 +161,7 @@ jobs:
       - merge-no-tls
     permissions:
       contents: read
+      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -168,11 +169,12 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: https://ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and Publish Home Assistant Add On
         uses: home-assistant/builder@master
         with:
           args: |
             --all \
+            --cosign \
             --target /data/addon
