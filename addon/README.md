@@ -1,4 +1,4 @@
-# PowerView to MQTT bridge for Home Assistant
+# PowerView to MQTT bridge: Home Assistant Add-On
 
 This addon provides a bridge between a [Hunter Douglas PowerView
 Hub](https://www.hunterdouglas.com/operating-systems/motorized/powerview) and
