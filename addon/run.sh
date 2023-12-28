@@ -27,7 +27,7 @@ if bashio::config.has_value mqtt_username ; then
   export PV_MQTT_USER="$(bashio::config mqtt_username)"
 fi
 
-if bashio::config.has_value mqtt_pass ; then
+if bashio::config.has_value mqtt_password ; then
   export PV_MQTT_PASSWORD="$(bashio::config mqtt_password)"
 fi
 
@@ -35,6 +35,6 @@ if bashio::config.has_value debug_level ; then
   export RUST_LOG="pview=$(bashio::config debug_level)"
 fi
 
-env | grep PV_
+env | grep PV_ | grep -v PASSWORD
 
 exec /pview serve-mqtt
