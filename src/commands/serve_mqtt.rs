@@ -441,10 +441,16 @@ async fn register_scenes(
 async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
     let mut reg = HassRegistration::new();
 
-    register_hub(&state.hub.load().user_data, state, &mut reg).await?;
-    register_shades(state, &mut reg).await?;
-    register_scenes(state, &mut reg).await?;
-    reg.apply_updates(state).await?;
+    register_hub(&state.hub.load().user_data, state, &mut reg)
+        .await
+        .context("register_hub")?;
+    register_shades(state, &mut reg)
+        .await
+        .context("register_shades")?;
+    register_scenes(state, &mut reg)
+        .await
+        .context("register_scenes")?;
+    reg.apply_updates(state).await.context("apply_updates")?;
     Ok(())
 }
 
@@ -808,15 +814,21 @@ impl ServeMqttCommand {
                     hub: hub.hub.clone(),
                     user_data,
                 }));
-                self.update_homeautomation_hook(state).await?;
-                register_with_hass(&state).await?;
+                self.update_homeautomation_hook(state)
+                    .await
+                    .context("update_homeautomation_hook")?;
+                register_with_hass(&state)
+                    .await
+                    .context("register_with_hass")?;
                 Ok(())
             }
             None => {
                 // Hub isn't responding. Do something to update an entity
                 // in hass so that this is visible
                 state.responding.store(false, Ordering::SeqCst);
-                advise_hass_of_unresponsive(state).await?;
+                advise_hass_of_unresponsive(state)
+                    .await
+                    .context("advise_hass_of_unresponsive")?;
                 Ok(())
             }
         }
@@ -862,13 +874,13 @@ impl ServeMqttCommand {
 
                 ServerEvent::HubDiscovered(resolved_hub) => {
                     if let Err(err) = self.handle_discovery(&state, resolved_hub).await {
-                        log::error!("While updating hass state: {err:#?}");
+                        log::error!("During handle_discovery: {err:#?}");
                     }
                 }
 
                 ServerEvent::PeriodicStateUpdate => {
                     if let Err(err) = register_with_hass(&state).await {
-                        log::error!("While updating hass state: {err:#?}");
+                        log::error!("During register_with_hass: {err:#?}");
                     }
                 }
             }
