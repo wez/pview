@@ -15,6 +15,8 @@ pub struct EntityConfig {
     pub unique_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_category: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -77,6 +79,7 @@ pub struct SensorConfig {
     pub base: EntityConfig,
 
     pub state_topic: String,
+    pub unit_of_measurement: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -85,8 +88,6 @@ pub struct ButtonConfig {
     pub base: EntityConfig,
 
     pub command_topic: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_press: Option<String>,
 }

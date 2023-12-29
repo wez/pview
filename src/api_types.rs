@@ -101,11 +101,13 @@ pub struct ShadesResponse {
 #[serde(deny_unknown_fields)]
 pub struct ShadeData {
     pub battery_status: BatteryStatus,
+    /// Battery level from 0-200
     pub battery_strength: i32,
     pub firmware: Option<ShadeFirmware>,
     pub capabilities: ShadeCapabilities,
     pub battery_kind: ShadeBatteryKind,
     pub smart_power_supply: SmartPowerSupply,
+    /// Signal level from 0-4
     pub signal_strength: Option<i32>,
     pub motor: Option<Motor>,
     pub group_id: i32,
@@ -134,9 +136,22 @@ impl ShadeData {
             format!("{} Middle Rail", self.name())
         }
     }
+
+    pub fn battery_percent(&self) -> Option<u8> {
+        if self.battery_status == BatteryStatus::Unavailable {
+            None
+        } else {
+            Some((self.battery_strength / 2) as u8)
+        }
+    }
+
+    pub fn signal_strength_percent(&self) -> Option<u8> {
+        self.signal_strength
+            .map(|level| ((level as u16) * 100 / 4) as u8)
+    }
 }
 
-#[derive(Serialize_repr, Deserialize_repr, Debug)]
+#[derive(Serialize_repr, Deserialize_repr, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum BatteryStatus {
     Unavailable = 0,

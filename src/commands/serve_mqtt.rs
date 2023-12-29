@@ -184,8 +184,10 @@ async fn register_diagnostic_entity(
             origin: Origin::default(),
             unique_id: unique_id.to_string(),
             entity_category: Some("diagnostic".to_string()),
+            icon: None,
         },
         state_topic: format!("{MODEL}/sensor/{unique_id}/state"),
+        unit_of_measurement: None,
     };
 
     reg.config(
@@ -323,6 +325,7 @@ async fn register_shades(
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: None,
+                    icon: None,
                 },
                 command_topic: format!("{MODEL}/shade/{serial}/{shade_id}/command"),
                 position_topic: format!("{MODEL}/shade/{serial}/{shade_id}/position"),
@@ -376,8 +379,8 @@ async fn register_shades(
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: Some("diagnostic".to_string()),
+                    icon: None,
                 },
-                icon: None,
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("JOG".to_string()),
             };
@@ -409,8 +412,8 @@ async fn register_shades(
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: Some("diagnostic".to_string()),
+                    icon: None,
                 },
-                icon: None,
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("CALIBRATE".to_string()),
             };
@@ -444,8 +447,8 @@ async fn register_shades(
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: Some("diagnostic".to_string()),
+                    icon: Some("mdi:heart".to_string()),
                 },
-                icon: Some("mdi:heart".to_string()),
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("HEART".to_string()),
             };
@@ -461,6 +464,84 @@ async fn register_shades(
             );
 
             reg.update(heart.base.availability_topic, "online");
+        }
+
+        {
+            let battery = SensorConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-battery"),
+                    name: Some("Battery".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/sensor/{serial}/{}/battery/availability",
+                        shade.id
+                    ),
+                    device_class: Some("battery".to_string()),
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                    icon: None,
+                },
+                state_topic: format!("{MODEL}/sensor/{device_id}-battery/state"),
+                unit_of_measurement: Some("%".to_string()),
+            };
+            reg.delete(format!(
+                "{}/sensor/{device_id}-battery/config",
+                state.discovery_prefix
+            ));
+
+            reg.config(
+                format!(
+                    "{}/sensor/{device_id}-battery/config",
+                    state.discovery_prefix
+                ),
+                serde_json::to_string(&battery)?,
+            );
+
+            if let Some(pct) = shade.battery_percent() {
+                reg.update(battery.base.availability_topic, "online");
+                reg.update(battery.state_topic, format!("{pct}"));
+            } else {
+                reg.update(battery.base.availability_topic, "offline");
+            }
+        }
+
+        {
+            let signal = SensorConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-signal"),
+                    name: Some("Signal Strength".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/sensor/{serial}/{}/signal/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                    icon: Some("mdi:signal".to_string()),
+                },
+                state_topic: format!("{MODEL}/sensor/{device_id}-signal/state"),
+                unit_of_measurement: Some("%".to_string()),
+            };
+            reg.delete(format!(
+                "{}/sensor/{device_id}-signal/config",
+                state.discovery_prefix
+            ));
+
+            reg.config(
+                format!(
+                    "{}/sensor/{device_id}-signal/config",
+                    state.discovery_prefix
+                ),
+                serde_json::to_string(&signal)?,
+            );
+
+            if let Some(pct) = shade.signal_strength_percent() {
+                reg.update(signal.base.availability_topic, "online");
+                reg.update(signal.state_topic, format!("{pct}"));
+            } else {
+                reg.update(signal.base.availability_topic, "offline");
+            }
         }
     }
 
@@ -509,6 +590,7 @@ async fn register_scenes(
                 origin: Origin::default(),
                 unique_id: unique_id.clone(),
                 entity_category: None,
+                icon: None,
             },
             command_topic: format!("{MODEL}/scene/{serial}/{scene_id}/set"),
             payload_on: "ON".to_string(),
