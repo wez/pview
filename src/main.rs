@@ -140,7 +140,13 @@ where
     }
 }
 
-#[tokio::main]
+// We use only 2 worker threads here because, by design and intent,
+// we largely serialize request processing to avoid swamping the hub.
+// On machines with a high core count, using the default setting would
+// spawn a lot of threads that we will never use. Keeping the thread
+// count small helps to reduce the resource footprint when running
+// the mqtt bridge.
+#[tokio::main(worker_threads=2)]
 async fn main() -> anyhow::Result<()> {
     color_backtrace::install();
     if let Ok(path) = dotenvy::dotenv() {
