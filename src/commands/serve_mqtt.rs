@@ -4,6 +4,7 @@ use crate::api_types::{
 };
 use crate::discovery::ResolvedHub;
 use crate::hass_helper::*;
+use crate::http_helpers::LockedError;
 use crate::hub::Hub;
 use crate::mqtt_helper::*;
 use crate::opt_env_var;
@@ -747,10 +748,12 @@ async fn register_with_hass(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
 }
 
 async fn advise_hass_of_unresponsive(state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
+    log::info!("Marking hub status as unresponsive");
+    state.responding.store(false, Ordering::SeqCst);
     state
         .client
         .publish(
-            format!("{MODEL}/shade/{}-responding/state", state.serial),
+            format!("{MODEL}/sensor/{}-responding/state", state.serial),
             "UNRESPONSIVE",
             QoS::AtMostOnce,
             false,
@@ -1183,7 +1186,6 @@ impl ServeMqttCommand {
             None => {
                 // Hub isn't responding. Do something to update an entity
                 // in hass so that this is visible
-                state.responding.store(false, Ordering::SeqCst);
                 advise_hass_of_unresponsive(state)
                     .await
                     .context("advise_hass_of_unresponsive")?;
@@ -1240,18 +1242,26 @@ impl ServeMqttCommand {
                     if let Err(err) = register_with_hass(&state).await {
                         log::error!("During register_with_hass: {err:#?}");
 
+                        let mut unresponsive = false;
+
                         // Look for a request error; it isn't the root cause but rather
                         // the penultimate cause, so we have to walk the chain to find it.
                         for cause in err.chain() {
                             if let Some(http_err) = cause.downcast_ref::<reqwest::Error>() {
                                 if http_err.is_connect() {
-                                    if let Err(err) = advise_hass_of_unresponsive(&state).await {
-                                        log::error!(
-                                            "While advising hass of unresponsive hub: {err:#}"
-                                        );
-                                    }
+                                    unresponsive = true;
+                                    break;
                                 }
+                            }
+                            if cause.downcast_ref::<LockedError>().is_some() {
+                                unresponsive = true;
                                 break;
+                            }
+                        }
+
+                        if unresponsive {
+                            if let Err(err) = advise_hass_of_unresponsive(&state).await {
+                                log::error!("While advising hass of unresponsive hub: {err:#}");
                             }
                         }
                     }

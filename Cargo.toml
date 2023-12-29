@@ -37,6 +37,7 @@ serde_json = "1.0.108"
 serde_repr = "0.1.17"
 serde_urlencoded = "0.7.1"
 tabout = "0.3.0"
+thiserror = "1.0.52"
 tokio = { version = "1.33.0", features = ["rt", "macros", "rt-multi-thread"] }
 
 [dependencies.wez-mdns]
