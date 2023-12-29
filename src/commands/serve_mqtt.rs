@@ -1447,6 +1447,8 @@ async fn mqtt_homeassitant_status(
     State(state): State<Arc<Pv2MqttState>>,
 ) -> anyhow::Result<()> {
     log::info!("Home Assistant status changed: {status}",);
+    // Make apply_updates be more thorough
+    state.first_run.store(true, Ordering::SeqCst);
     register_with_hass(&state).await
 }
 
