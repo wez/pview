@@ -800,6 +800,19 @@ async fn advise_hass_of_position(
     Ok(())
 }
 
+async fn advise_hass_of_updated_position(
+    state: &Arc<Pv2MqttState>,
+    shade: &ShadeData,
+) -> anyhow::Result<()> {
+    if let Some(pct) = shade.pos1_percent() {
+        advise_hass_of_position(&state, &format!("{}", shade.id), pct).await?;
+    }
+    if let Some(pct) = shade.pos2_percent() {
+        advise_hass_of_position(&state, &format!("{}{SECONDARY_SUFFIX}", shade.id), pct).await?;
+    }
+    Ok(())
+}
+
 fn battery_kind_to_state(kind: ShadeBatteryKind) -> &'static str {
     match kind {
         ShadeBatteryKind::HardWiredPowerSupply => HARD_WIRED_LABEL,
@@ -891,7 +904,7 @@ impl ServeMqttCommand {
                     .await
                     .map_err(generic)?;
             } else if let Ok(config) = serde_urlencoded::from_str::<ConfigUpdate>(&body) {
-                log::debug!(
+                log::warn!(
                     "** A shade failed post-move verification. New configuration {config:?}"
                 );
             } else {
@@ -1379,30 +1392,40 @@ async fn mqtt_shade_command(
     log::info!("{command} {shade_id} {}", shade.name());
     match command.as_ref() {
         "OPEN" => {
-            hub.hub.move_shade(shade_id, ShadeUpdateMotion::Up).await?;
+            let shade = hub.hub.move_shade(shade_id, ShadeUpdateMotion::Up).await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "CLOSE" => {
-            hub.hub
+            let shade = hub
+                .hub
                 .move_shade(shade_id, ShadeUpdateMotion::Down)
                 .await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "STOP" => {
-            hub.hub
+            let shade = hub
+                .hub
                 .move_shade(shade_id, ShadeUpdateMotion::Stop)
                 .await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "JOG" => {
-            hub.hub.move_shade(shade_id, ShadeUpdateMotion::Jog).await?;
+            let shade = hub.hub.move_shade(shade_id, ShadeUpdateMotion::Jog).await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "CALIBRATE" => {
-            hub.hub
+            let shade = hub
+                .hub
                 .move_shade(shade_id, ShadeUpdateMotion::Calibrate)
                 .await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "HEART" => {
-            hub.hub
+            let shade = hub
+                .hub
                 .move_shade(shade_id, ShadeUpdateMotion::Heart)
                 .await?;
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         "UPDATE_BATTERY" => {
             let shade = hub.hub.shade_update_battery_level(shade_id).await?;
@@ -1410,8 +1433,7 @@ async fn mqtt_shade_command(
         }
         "REFRESH_POS" => {
             let shade = hub.hub.shade_refresh_position(shade_id).await?;
-            log::info!("shade: {shade:?}");
-            // TODO: position update
+            advise_hass_of_updated_position(&state, &shade).await?;
         }
         BATTERY_LABEL => {
             let shade = hub

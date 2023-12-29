@@ -151,6 +151,14 @@ impl ShadeData {
         self.signal_strength
             .map(|level| ((level as u16) * 100 / 4) as u8)
     }
+
+    pub fn pos1_percent(&self) -> Option<u8> {
+        self.positions.as_ref().map(|p| p.pos1_percent())
+    }
+
+    pub fn pos2_percent(&self) -> Option<u8> {
+        self.positions.as_ref().and_then(|p| p.pos2_percent())
+    }
 }
 
 #[derive(Serialize_repr, Deserialize_repr, Debug, PartialEq, Eq)]
