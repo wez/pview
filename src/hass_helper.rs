@@ -91,3 +91,13 @@ pub struct ButtonConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_press: Option<String>,
 }
+
+#[derive(Serialize, Clone, Debug)]
+pub struct SelectConfig {
+    #[serde(flatten)]
+    pub base: EntityConfig,
+
+    pub command_topic: String,
+    pub options: Vec<String>,
+    pub state_topic: String,
+}

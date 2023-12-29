@@ -1,5 +1,5 @@
 use crate::api_types::{
-    HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService,
+    HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService, ShadeBatteryKind,
     ShadeCapabilityFlags, ShadeData, ShadePosition, ShadeUpdateMotion, UserData,
 };
 use crate::discovery::ResolvedHub;
@@ -25,6 +25,9 @@ const SECONDARY_SUFFIX: &str = "_middle";
 const MODEL: &str = "pv2mqtt";
 const WEZ: &str = "Wez Furlong";
 const HUNTER_DOUGLAS: &str = "Hunter Douglas";
+const BATTERY_LABEL: &str = "Battery";
+const RECHARGEABLE_LABEL: &str = "Rechargeable Battery";
+const HARD_WIRED_LABEL: &str = "Hard Wired";
 
 // <https://www.home-assistant.io/integrations/cover.mqtt/>
 
@@ -352,7 +355,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!(
                     "{}/cover/{serial}-{shade_id}/config",
@@ -401,7 +403,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!("{}/button/{device_id}-jog/config", state.discovery_prefix),
                 serde_json::to_string(&jog)?,
@@ -423,7 +424,7 @@ async fn register_shades(
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: Some("diagnostic".to_string()),
-                    icon: None,
+                    icon: Some("mdi:swap-vertical-circle-outline".to_string()),
                 },
                 command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
                 payload_press: Some("CALIBRATE".to_string()),
@@ -433,7 +434,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!(
                     "{}/button/{device_id}-calibrate/config",
@@ -468,7 +468,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!("{}/button/{device_id}-heart/config", state.discovery_prefix),
                 serde_json::to_string(&heart)?,
@@ -536,7 +535,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!(
                     "{}/button/{device_id}-rebattery/config",
@@ -611,7 +609,6 @@ async fn register_shades(
                 state.discovery_prefix
             ));
 
-            // Tell hass about this shade
             reg.config(
                 format!(
                     "{}/button/{device_id}-refresh/config",
@@ -621,6 +618,46 @@ async fn register_shades(
             );
 
             reg.update(refresh_position.base.availability_topic, "online");
+        }
+
+        {
+            let power_source = SelectConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-psu"),
+                    name: Some("Power Source".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/psu/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                    icon: Some("mdi:power-plug-outline".to_string()),
+                },
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                state_topic: state.battery_kind_state_topic(&shade),
+                options: vec![
+                    HARD_WIRED_LABEL.to_string(),
+                    BATTERY_LABEL.to_string(),
+                    RECHARGEABLE_LABEL.to_string(),
+                ],
+            };
+            reg.delete(format!(
+                "{}/select/{device_id}-psu/config",
+                state.discovery_prefix
+            ));
+
+            reg.config(
+                format!("{}/select/{device_id}-psu/config", state.discovery_prefix),
+                serde_json::to_string(&power_source)?,
+            );
+
+            reg.update(power_source.base.availability_topic, "online");
+            reg.update(
+                power_source.state_topic,
+                battery_kind_to_state(shade.battery_kind).to_string(),
+            );
         }
     }
 
@@ -755,6 +792,33 @@ async fn advise_hass_of_position(
                 serial = state.serial
             ),
             &format!("{position}").as_bytes(),
+            QoS::AtMostOnce,
+            false,
+        )
+        .await?;
+
+    Ok(())
+}
+
+fn battery_kind_to_state(kind: ShadeBatteryKind) -> &'static str {
+    match kind {
+        ShadeBatteryKind::HardWiredPowerSupply => HARD_WIRED_LABEL,
+        ShadeBatteryKind::BatteryWand => BATTERY_LABEL,
+        ShadeBatteryKind::RechargeableBattery => RECHARGEABLE_LABEL,
+    }
+}
+
+async fn advise_hass_of_battery_kind(
+    state: &Arc<Pv2MqttState>,
+    shade: &ShadeData,
+) -> anyhow::Result<()> {
+    let state_topic = state.battery_kind_state_topic(shade);
+
+    state
+        .client
+        .publish(
+            state_topic,
+            battery_kind_to_state(shade.battery_kind),
             QoS::AtMostOnce,
             false,
         )
@@ -1349,7 +1413,30 @@ async fn mqtt_shade_command(
             log::info!("shade: {shade:?}");
             // TODO: position update
         }
-        _ => {}
+        BATTERY_LABEL => {
+            let shade = hub
+                .hub
+                .change_battery_kind(shade_id, ShadeBatteryKind::BatteryWand)
+                .await?;
+            advise_hass_of_battery_kind(&state, &shade).await?;
+        }
+        RECHARGEABLE_LABEL => {
+            let shade = hub
+                .hub
+                .change_battery_kind(shade_id, ShadeBatteryKind::RechargeableBattery)
+                .await?;
+            advise_hass_of_battery_kind(&state, &shade).await?;
+        }
+        HARD_WIRED_LABEL => {
+            let shade = hub
+                .hub
+                .change_battery_kind(shade_id, ShadeBatteryKind::HardWiredPowerSupply)
+                .await?;
+            advise_hass_of_battery_kind(&state, &shade).await?;
+        }
+        _ => {
+            log::warn!("Command {command} has no handler");
+        }
     }
 
     Ok(())
@@ -1385,7 +1472,12 @@ impl Pv2MqttState {
             self.serial, shade.id
         )
     }
+
     pub fn battery_state_topic(&self, shade: &ShadeData) -> String {
         format!("{MODEL}/sensor/{}-{}-battery/state", self.serial, shade.id)
+    }
+
+    pub fn battery_kind_state_topic(&self, shade: &ShadeData) -> String {
+        format!("{MODEL}/select/{}/{}/psu/state", self.serial, shade.id)
     }
 }

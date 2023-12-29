@@ -100,6 +100,31 @@ impl Hub {
         anyhow::bail!("No room with name or id matching provided '{name}' was found");
     }
 
+    pub async fn change_battery_kind(
+        &self,
+        shade_id: i32,
+        kind: ShadeBatteryKind,
+    ) -> anyhow::Result<ShadeData> {
+        let url = self.url(&format!("api/shades/{shade_id}"));
+
+        #[derive(Deserialize, Debug)]
+        struct Response {
+            shade: ShadeData,
+        }
+
+        let response: Response = request_with_json_response(
+            Method::PUT,
+            url,
+            &json!({
+                "shade": {
+                    "batteryKind": kind
+                }
+            }),
+        )
+        .await?;
+        Ok(response.shade)
+    }
+
     pub async fn change_shade_position(
         &self,
         shade_id: i32,
