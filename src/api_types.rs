@@ -122,6 +122,8 @@ pub struct ShadeData {
     pub secondary_name: Option<Base64Name>,
     #[serde(rename = "type")]
     pub shade_type: ShadeType,
+    #[serde(default)]
+    pub timed_out: bool,
 }
 
 impl ShadeData {

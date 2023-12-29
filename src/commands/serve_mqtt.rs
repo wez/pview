@@ -1,6 +1,6 @@
 use crate::api_types::{
     HomeAutomationPostBackData, HomeAutomationRecordType, HomeAutomationService,
-    ShadeCapabilityFlags, ShadePosition, ShadeUpdateMotion, UserData,
+    ShadeCapabilityFlags, ShadeData, ShadePosition, ShadeUpdateMotion, UserData,
 };
 use crate::discovery::ResolvedHub;
 use crate::hass_helper::*;
@@ -95,12 +95,7 @@ impl HassRegistration {
         Self {
             deletes: vec![],
             configs: vec![],
-            updates: vec![
-                // Delay between registering configs and advising hass
-                // of the states, so that hass has had enough time
-                // to subscribe to the correct topics
-                RegEntry::Delay(Duration::from_millis(500)),
-            ],
+            updates: vec![],
         }
     }
 
@@ -120,7 +115,23 @@ impl HassRegistration {
     }
 
     pub async fn apply_updates(mut self, state: &Arc<Pv2MqttState>) -> anyhow::Result<()> {
-        if !state.first_run.load(Ordering::SeqCst) {
+        let is_first_run = state.first_run.load(Ordering::SeqCst);
+
+        if is_first_run {
+            if !self.configs.is_empty() && !self.updates.is_empty() {
+                // Delay between registering configs and advising hass
+                // of the states, so that hass has had enough time
+                // to subscribe to the correct topics
+                let delay = self.configs.len() as u64 * 30;
+                log::info!(
+                    "there are {} configs, and {} updates. delay ms = {delay}",
+                    self.configs.len(),
+                    self.updates.len()
+                );
+                self.updates
+                    .insert(0, RegEntry::Delay(Duration::from_millis(delay)));
+            }
+        } else {
             self.deletes.clear();
         }
         for queue in [self.deletes, self.configs, self.updates] {
@@ -471,17 +482,14 @@ async fn register_shades(
                 base: EntityConfig {
                     unique_id: format!("{device_id}-battery"),
                     name: Some("Battery".to_string()),
-                    availability_topic: format!(
-                        "{MODEL}/sensor/{serial}/{}/battery/availability",
-                        shade.id
-                    ),
+                    availability_topic: state.battery_availability_topic(&shade),
                     device_class: Some("battery".to_string()),
                     origin: Origin::default(),
                     device: device.clone(),
                     entity_category: Some("diagnostic".to_string()),
                     icon: None,
                 },
-                state_topic: format!("{MODEL}/sensor/{device_id}-battery/state"),
+                state_topic: state.battery_state_topic(&shade),
                 unit_of_measurement: Some("%".to_string()),
             };
             reg.delete(format!(
@@ -503,6 +511,41 @@ async fn register_shades(
             } else {
                 reg.update(battery.base.availability_topic, "offline");
             }
+        }
+        {
+            let refresh_battery = ButtonConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-rebattery"),
+                    name: Some("Refresh Battery Status".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/rebattery/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                    icon: None,
+                },
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                payload_press: Some("UPDATE_BATTERY".to_string()),
+            };
+
+            reg.delete(format!(
+                "{}/button/{device_id}-rebattery/config",
+                state.discovery_prefix
+            ));
+
+            // Tell hass about this shade
+            reg.config(
+                format!(
+                    "{}/button/{device_id}-rebattery/config",
+                    state.discovery_prefix
+                ),
+                serde_json::to_string(&refresh_battery)?,
+            );
+
+            reg.update(refresh_battery.base.availability_topic, "online");
         }
 
         {
@@ -542,6 +585,42 @@ async fn register_shades(
             } else {
                 reg.update(signal.base.availability_topic, "offline");
             }
+        }
+
+        {
+            let refresh_position = ButtonConfig {
+                base: EntityConfig {
+                    unique_id: format!("{device_id}-refresh"),
+                    name: Some("Refresh Position".to_string()),
+                    availability_topic: format!(
+                        "{MODEL}/shade/{serial}/{}/refresh/availability",
+                        shade.id
+                    ),
+                    device_class: None,
+                    origin: Origin::default(),
+                    device: device.clone(),
+                    entity_category: Some("diagnostic".to_string()),
+                    icon: None,
+                },
+                command_topic: format!("{MODEL}/shade/{serial}/{}/command", shade.id),
+                payload_press: Some("REFRESH_POS".to_string()),
+            };
+
+            reg.delete(format!(
+                "{}/button/{device_id}-refresh/config",
+                state.discovery_prefix
+            ));
+
+            // Tell hass about this shade
+            reg.config(
+                format!(
+                    "{}/button/{device_id}-refresh/config",
+                    state.discovery_prefix
+                ),
+                serde_json::to_string(&refresh_position)?,
+            );
+
+            reg.update(refresh_position.base.availability_topic, "online");
         }
     }
 
@@ -680,6 +759,32 @@ async fn advise_hass_of_position(
             false,
         )
         .await?;
+
+    Ok(())
+}
+
+async fn advise_hass_of_battery_level(
+    state: &Arc<Pv2MqttState>,
+    shade: &ShadeData,
+) -> anyhow::Result<()> {
+    let availability_topic = state.battery_availability_topic(shade);
+    let state_topic = state.battery_state_topic(shade);
+
+    if let Some(pct) = shade.battery_percent() {
+        state
+            .client
+            .publish(state_topic, format!("{pct}"), QoS::AtMostOnce, false)
+            .await?;
+        state
+            .client
+            .publish(availability_topic, "online", QoS::AtMostOnce, false)
+            .await?;
+    } else {
+        state
+            .client
+            .publish(availability_topic, "offline", QoS::AtMostOnce, false)
+            .await?;
+    }
 
     Ok(())
 }
@@ -1235,6 +1340,15 @@ async fn mqtt_shade_command(
                 .move_shade(shade_id, ShadeUpdateMotion::Heart)
                 .await?;
         }
+        "UPDATE_BATTERY" => {
+            let shade = hub.hub.shade_update_battery_level(shade_id).await?;
+            advise_hass_of_battery_level(&state, &shade).await?;
+        }
+        "REFRESH_POS" => {
+            let shade = hub.hub.shade_refresh_position(shade_id).await?;
+            log::info!("shade: {shade:?}");
+            // TODO: position update
+        }
         _ => {}
     }
 
@@ -1262,4 +1376,16 @@ struct Pv2MqttState {
     discovery_prefix: String,
     first_run: AtomicBool,
     responding: AtomicBool,
+}
+
+impl Pv2MqttState {
+    pub fn battery_availability_topic(&self, shade: &ShadeData) -> String {
+        format!(
+            "{MODEL}/sensor/{}/{}/battery/availability",
+            self.serial, shade.id
+        )
+    }
+    pub fn battery_state_topic(&self, shade: &ShadeData) -> String {
+        format!("{MODEL}/sensor/{}-{}-battery/state", self.serial, shade.id)
+    }
 }

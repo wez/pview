@@ -174,6 +174,40 @@ impl Hub {
         anyhow::bail!("No scene with name matching '{name}' was found");
     }
 
+    pub async fn shade_update_battery_level(&self, shade_id: i32) -> anyhow::Result<ShadeData> {
+        let url = self.url(&format!("api/shades/{shade_id}?updateBatteryLevel=true"));
+
+        #[derive(Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        struct Response {
+            shade: ShadeData,
+        }
+        let response: Response = get_request_with_json_response(url).await?;
+
+        if response.shade.timed_out {
+            anyhow::bail!("battery refresh request for shade {shade_id}: hub reports: timed out");
+        }
+
+        Ok(response.shade)
+    }
+
+    pub async fn shade_refresh_position(&self, shade_id: i32) -> anyhow::Result<ShadeData> {
+        let url = self.url(&format!("api/shades/{shade_id}?refresh=true"));
+
+        #[derive(Deserialize, Debug)]
+        #[serde(rename_all = "camelCase")]
+        struct Response {
+            shade: ShadeData,
+        }
+        let response: Response = get_request_with_json_response(url).await?;
+
+        if response.shade.timed_out {
+            anyhow::bail!("position refresh request for shade {shade_id}: hub reports: timed out");
+        }
+
+        Ok(response.shade)
+    }
+
     pub async fn shade_by_id(&self, shade_id: i32) -> anyhow::Result<ShadeData> {
         let url = self.url(&format!("api/shades/{shade_id}"));
 
