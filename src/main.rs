@@ -10,7 +10,6 @@ mod discovery;
 mod hass_helper;
 mod http_helpers;
 mod hub;
-mod mqtt_helper;
 mod version_info;
 
 use crate::hub::*;

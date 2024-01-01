@@ -6,7 +6,7 @@ use crate::discovery::ResolvedHub;
 use crate::hass_helper::*;
 use crate::http_helpers::LockedError;
 use crate::hub::Hub;
-use crate::mqtt_helper::*;
+use mosquitto_rs::router::*;
 use crate::opt_env_var;
 use crate::version_info::pview_version;
 use anyhow::Context;
@@ -1086,7 +1086,7 @@ impl ServeMqttCommand {
         router: &MqttRouter<Arc<Pv2MqttState>>,
     ) -> anyhow::Result<()> {
         log::debug!("msg: {msg:?}");
-        router.dispatch(msg, Arc::clone(state)).await
+        Ok(router.dispatch(msg, Arc::clone(state)).await?)
     }
 
     async fn handle_pv_event(
