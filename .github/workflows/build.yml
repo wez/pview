@@ -49,7 +49,7 @@ jobs:
         with:
           context: .
           labels: ${{ steps.meta.outputs.labels }}
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=${{ env.IMAGE_WITH_TLS }},push-by-digest=true,name-canonical=true,push=true
 
   build-no-tls:
@@ -67,6 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Docker meta
+        if: ${{ github.event_name != 'pull_request' }}
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -86,7 +87,17 @@ jobs:
           registry: https://ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build No Push
+        if: ${{ github.event_name == 'pull_request' }}
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.notls
+          platforms: ${{ matrix.platform }}
+          push: false
       - name: Build and push by digest
+        if: ${{ github.event_name != 'pull_request' }}
         id: build
         uses: docker/build-push-action@v5
         with:
@@ -97,6 +108,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           outputs: type=image,name=${{ env.IMAGE_NO_TLS }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
+        if: ${{ github.event_name != 'pull_request' }}
         id: digest
         run: |
           mkdir -p /tmp/digests
@@ -104,6 +116,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
           echo "DIGEST_NAME=$(echo ${{ matrix.platform }} | sed 's,/,-,g')" >> $GITHUB_OUTPUT
       - name: Upload digest
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: digest-${{ steps.digest.outputs.DIGEST_NAME }}
@@ -112,6 +125,7 @@ jobs:
           retention-days: 1
 
   merge-no-tls:
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     needs:
       - build-no-tls
