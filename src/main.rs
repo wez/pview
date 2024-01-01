@@ -146,7 +146,7 @@ where
 // spawn a lot of threads that we will never use. Keeping the thread
 // count small helps to reduce the resource footprint when running
 // the mqtt bridge.
-#[tokio::main(worker_threads=2)]
+#[tokio::main(worker_threads = 2)]
 async fn main() -> anyhow::Result<()> {
     color_backtrace::install();
     if let Ok(path) = dotenvy::dotenv() {
