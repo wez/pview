@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Loading environment overrides from {path:?}");
     }
 
-    let tz: chrono_tz::Tz = std::env::var("TZ")
+    let tz: chrono_tz::Tz = iana_time_zone::get_timezone()
         .ok()
         .and_then(|name| name.parse().ok())
         .unwrap_or(chrono_tz::UTC);
