@@ -89,7 +89,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build No Push
         if: ${{ github.event_name == 'pull_request' }}
-        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
