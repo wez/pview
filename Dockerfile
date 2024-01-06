@@ -3,7 +3,9 @@
 ####################################################################################################
 FROM alpine:latest AS builder
 
-RUN apk --no-cache add rust cargo g++ openssl openssl-dev git
+RUN apk --no-cache add rustup cargo g++ openssl openssl-dev git
+RUN rustup-init -y
+ENV PATH=/root/.cargo/bin:$PATH
 ENV OPENSSL_STATIC=yes \
     PKG_CONFIG_ALLOW_CROSS=true \
     PKG_CONFIG_ALL_STATIC=true \
