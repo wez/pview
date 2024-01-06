@@ -24,6 +24,4 @@ schema:
   mqtt_port: "int?"
   mqtt_username: "str?"
   mqtt_password: "str?"
-  mqtt_bind_address: "str?"
-  discovery_prefix: "str?"
   debug_level: "str?"
