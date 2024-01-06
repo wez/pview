@@ -6,12 +6,12 @@ use crate::discovery::ResolvedHub;
 use crate::hass_helper::*;
 use crate::http_helpers::LockedError;
 use crate::hub::Hub;
-use mosquitto_rs::router::*;
 use crate::opt_env_var;
 use crate::version_info::pview_version;
 use anyhow::Context;
 use arc_swap::ArcSwap;
 use axum::extract::Path;
+use mosquitto_rs::router::*;
 use mosquitto_rs::*;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -62,9 +62,11 @@ pub struct ServeMqttCommand {
     discovery_prefix: String,
 }
 
-#[derive(Debug)]
 enum ServerEvent {
-    MqttMessage(Message),
+    MqttMessage {
+        router: Arc<MqttRouter<Arc<Pv2MqttState>>>,
+        msg: Message,
+    },
     HomeAutomationData {
         serial: String,
         data: Vec<HomeAutomationPostBackData>,
@@ -998,36 +1000,46 @@ impl ServeMqttCommand {
             .with_context(|| format!("connecting to mqtt broker {mqtt_host}:{mqtt_port}"))?;
         let subscriber = client.subscriber().expect("to own the subscriber");
 
-        let mut router: MqttRouter<Arc<Pv2MqttState>> = MqttRouter::new(client.clone());
+        async fn rebuild_router(
+            client: &Client,
+            state: &Arc<Pv2MqttState>,
+            discovery_prefix: &str,
+        ) -> anyhow::Result<Arc<MqttRouter<Arc<Pv2MqttState>>>> {
+            let mut router: MqttRouter<Arc<Pv2MqttState>> = MqttRouter::new(client.clone());
 
-        router
-            .route(
-                format!("{}/status", self.discovery_prefix),
-                mqtt_homeassitant_status,
-            )
-            .await?;
+            router
+                .route(
+                    format!("{discovery_prefix}/status"),
+                    mqtt_homeassitant_status,
+                )
+                .await?;
 
-        router
-            .route(
-                format!("{MODEL}/scene/:serial/:scene_id/set"),
-                mqtt_scene_activate,
-            )
-            .await?;
+            router
+                .route(
+                    format!("{MODEL}/scene/:serial/:scene_id/set"),
+                    mqtt_scene_activate,
+                )
+                .await?;
 
-        router
-            .route(
-                format!("{MODEL}/shade/:serial/:shade_id/set_position"),
-                mqtt_shade_set_position,
-            )
-            .await?;
-        router
-            .route(
-                format!("{MODEL}/shade/:serial/:shade_id/command"),
-                mqtt_shade_command,
-            )
-            .await?;
+            router
+                .route(
+                    format!("{MODEL}/shade/:serial/:shade_id/set_position"),
+                    mqtt_shade_set_position,
+                )
+                .await?;
+            router
+                .route(
+                    format!("{MODEL}/shade/:serial/:shade_id/command"),
+                    mqtt_shade_command,
+                )
+                .await?;
 
-        register_with_hass(&state).await?;
+            register_with_hass(&state).await?;
+            Ok(Arc::new(router))
+        }
+
+        let mut router = rebuild_router(&client, &state, &self.discovery_prefix).await?;
+        let mut need_rebuild = false;
 
         {
             let tx = tx.clone();
@@ -1066,16 +1078,48 @@ impl ServeMqttCommand {
             });
         }
 
-        tokio::spawn(async move {
-            while let Ok(msg) = subscriber.recv().await {
-                if let Err(err) = tx.send(ServerEvent::MqttMessage(msg)).await {
-                    log::error!("{err:#?}");
-                    break;
+        {
+            let state = state.clone();
+            let discovery_prefix = self.discovery_prefix.to_string();
+            tokio::spawn(async move {
+                while let Ok(event) = subscriber.recv().await {
+                    match event {
+                        Event::Message(msg) => {
+                            if let Err(err) = tx
+                                .send(ServerEvent::MqttMessage {
+                                    msg,
+                                    router: router.clone(),
+                                })
+                                .await
+                            {
+                                log::error!("{err:#?}");
+                                break;
+                            }
+                        }
+                        Event::Disconnected(reason) => {
+                            log::warn!("MQTT disconnected: {reason}");
+                            need_rebuild = true;
+                        }
+                        Event::Connected(status) => {
+                            log::info!("MQTT (re)connected {status}");
+                            if need_rebuild {
+                                match rebuild_router(&client, &state, &discovery_prefix).await {
+                                    Err(err) => {
+                                        log::error!("Rebuilding router: {err:#}");
+                                        break;
+                                    }
+                                    Ok(r) => {
+                                        router = r;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-        });
+            });
+        }
 
-        self.serve(rx, state, router).await;
+        self.serve(rx, state).await;
         Ok(())
     }
 
@@ -1194,19 +1238,14 @@ impl ServeMqttCommand {
         }
     }
 
-    async fn serve(
-        &self,
-        mut rx: Receiver<ServerEvent>,
-        state: Arc<Pv2MqttState>,
-        router: MqttRouter<Arc<Pv2MqttState>>,
-    ) {
+    async fn serve(&self, mut rx: Receiver<ServerEvent>, state: Arc<Pv2MqttState>) {
         log::info!(
             "Version {}. Waiting for mqtt and pv messages",
             pview_version()
         );
         while let Some(msg) = rx.recv().await {
             match msg {
-                ServerEvent::MqttMessage(msg) => {
+                ServerEvent::MqttMessage { msg, router } => {
                     if let Err(err) = self.handle_mqtt_message(msg, &state, &router).await {
                         log::error!("handling mqtt message: {err:#}");
                     }
