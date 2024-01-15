@@ -20,7 +20,7 @@ mqtt-no-tls = ["mosquitto-rs/vendored-mosquitto"]
 [dependencies]
 anyhow = "1.0.77"
 arc-swap = "1.6.0"
-axum = { version = "0.7.2", default-features=false, features = ["tokio", "http1"] }
+axum = { version = "0.7.4", default-features=false, features = ["tokio", "http1"] }
 base64 = "0.21.5"
 bitflags = { version = "2.4.1", features = ["serde"] }
 chrono = "0.4.31"
@@ -47,7 +47,7 @@ version = "0.1.2"
 #path = "../mdns"
 
 [dependencies.mosquitto-rs]
-version="0.10.0"
+version="0.11.1"
 default-features = false
 features = ["router"]
 #path = "../mosquitto-rs/mosquitto-rs"
