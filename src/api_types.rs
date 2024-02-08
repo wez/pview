@@ -465,7 +465,7 @@ pub struct UserData {
     /// whether it is in AP mode
     pub wireless: bool,
     /// the ssid of AP mode
-    pub ssid: String,
+    pub ssid: Option<String>,
     pub firmware: FirmwareInfo,
     pub serial_number: String,
     #[serde(rename = "rfIDInt")]
@@ -515,8 +515,8 @@ pub struct TimeConfiguration {
     pub local_sunrise_time_in_minutes: i64,
     pub local_sunset_time_in_minutes: i64,
     pub current_offset: i64,
-    pub longitude: f64,
-    pub latitude: f64,
+    pub longitude: Option<f64>,
+    pub latitude: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
