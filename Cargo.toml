@@ -18,14 +18,14 @@ mqtt-tls = ["mosquitto-rs/vendored-mosquitto", "mosquitto-rs/vendored-mosquitto-
 mqtt-no-tls = ["mosquitto-rs/vendored-mosquitto"]
 
 [dependencies]
-anyhow = "1.0.77"
+anyhow = "1.0.80"
 arc-swap = "1.6.0"
 axum = { version = "0.7.4", default-features=false, features = ["tokio", "http1"] }
 base64 = "0.21.5"
 bitflags = { version = "2.4.2", features = ["serde"] }
 chrono = "0.4.34"
 chrono-tz = "0.8.6"
-clap = { version = "4.5.0", features = ["derive"] }
+clap = { version = "4.5.1", features = ["derive"] }
 color-backtrace = "0.6.1"
 data-encoding = "2.5.0"
 dotenvy = "0.15.7"
