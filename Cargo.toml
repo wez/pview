@@ -18,24 +18,24 @@ mqtt-tls = ["mosquitto-rs/vendored-mosquitto", "mosquitto-rs/vendored-mosquitto-
 mqtt-no-tls = ["mosquitto-rs/vendored-mosquitto"]
 
 [dependencies]
-anyhow = "1.0.77"
-arc-swap = "1.6.0"
+anyhow = "1.0.80"
+arc-swap = "1.7.0"
 axum = { version = "0.7.4", default-features=false, features = ["tokio", "http1"] }
-base64 = "0.21.5"
+base64 = "0.22.0"
 bitflags = { version = "2.4.2", features = ["serde"] }
 chrono = "0.4.34"
 chrono-tz = "0.8.6"
-clap = { version = "4.5.0", features = ["derive"] }
+clap = { version = "4.5.1", features = ["derive"] }
 color-backtrace = "0.6.1"
 data-encoding = "2.5.0"
 dotenvy = "0.15.7"
 env_logger = "0.10.2"
 iana-time-zone = "0.1.60"
-log = "0.4.20"
+log = "0.4.21"
 matchit = "0.7.3"
 reqwest = { version = "0.11.24", default-features=false, features = ["json"] }
-serde = { version = "1.0.196", features = ["derive"] }
-serde_json = "1.0.113"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
 serde_repr = "0.1.17"
 serde_urlencoded = "0.7.1"
 tabout = "0.3.0"
