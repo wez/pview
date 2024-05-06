@@ -21,7 +21,7 @@ mqtt-no-tls = ["mosquitto-rs/vendored-mosquitto"]
 anyhow = "1.0.82"
 arc-swap = "1.7.1"
 axum = { version = "0.7.5", default-features=false, features = ["tokio", "http1"] }
-base64 = "0.22.0"
+base64 = "0.22.1"
 bitflags = { version = "2.5.0", features = ["serde"] }
 chrono = "0.4.38"
 chrono-tz = "0.9.0"
@@ -34,7 +34,7 @@ iana-time-zone = "0.1.60"
 log = "0.4.21"
 matchit = "0.8.2"
 reqwest = { version = "0.12.4", default-features=false, features = ["json"] }
-serde = { version = "1.0.199", features = ["derive"] }
+serde = { version = "1.0.200", features = ["derive"] }
 serde_json = "1.0.116"
 serde_repr = "0.1.19"
 serde_urlencoded = "0.7.1"
