@@ -22,20 +22,20 @@ anyhow = "1.0.86"
 arc-swap = "1.7.1"
 axum = { version = "0.7.5", default-features=false, features = ["tokio", "http1"] }
 base64 = "0.22.1"
-bitflags = { version = "2.5.0", features = ["serde"] }
+bitflags = { version = "2.6.0", features = ["serde"] }
 chrono = "0.4.38"
 chrono-tz = "0.9.0"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.8", features = ["derive"] }
 color-backtrace = "0.6.1"
 data-encoding = "2.6.0"
 dotenvy = "0.15.7"
-env_logger = "0.10.2"
+env_logger = "0.11.3"
 iana-time-zone = "0.1.60"
-log = "0.4.21"
-matchit = "0.8.2"
-reqwest = { version = "0.12.4", default-features=false, features = ["json"] }
+log = "0.4.22"
+matchit = "0.8.3"
+reqwest = { version = "0.12.5", default-features=false, features = ["json"] }
 serde = { version = "1.0.202", features = ["derive"] }
-serde_json = "1.0.117"
+serde_json = "1.0.119"
 serde_repr = "0.1.19"
 serde_urlencoded = "0.7.1"
 tabout = "0.3.0"
